@@ -1,0 +1,44 @@
+name: Sync cycle reports
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/10 * * * *'
+permissions:
+  contents: read
+concurrency:
+  group: cycle-publisher
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.repository == 'siahuat0727/model-cycle-reports' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: publisher
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install publisher tools
+        run: |
+          python -m pip install -r requirements.txt
+          npm install -g @larksuite/cli@1.0.96 --registry=https://registry.npmjs.org --no-audit --no-fund
+      - name: Sync and publish new successful result
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATE_KEY: ${{ secrets.STATE_KEY }}
+          SOURCE_REPOSITORY: ${{ secrets.SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ secrets.SOURCE_BRANCH }}
+          SOURCE_ACTIONS_TOKEN: ${{ secrets.SOURCE_ACTIONS_TOKEN }}
+        run: python -m publisher.sync
+      - name: Remove local credentials
+        if: always()
+        run: |
+          rm -rf "$HOME/.lark-cli" "$HOME/.local/share/lark-cli"
