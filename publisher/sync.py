@@ -15,10 +15,13 @@ def run(args, cwd=None, timeout=300):
     env = {k:v for k,v in os.environ.items() if k not in {
         'GH_TOKEN','GITHUB_TOKEN','SOURCE_ACTIONS_TOKEN','STATE_KEY',
         'SOURCE_REPOSITORY','SOURCE_BRANCH'}}
-    result = subprocess.run(args, cwd=cwd, env=env, capture_output=True,
-                            text=True, timeout=timeout)
+    try:
+        result = subprocess.run(args, cwd=cwd, env=env, capture_output=True,
+                                text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError('External operation timed out: '+args[0]) from None
     if result.returncode:
-        raise RuntimeError('External operation failed: '+args[0]+'\n'+(result.stdout+result.stderr)[-4000:])
+        raise RuntimeError('External operation failed: '+args[0]+' (exit '+str(result.returncode)+')')
     return result.stdout
 
 

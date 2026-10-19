@@ -1,4 +1,4 @@
-"""Read one successful CI artifact without executing its contents."""
+"""Read completed CI artifacts without executing their contents."""
 import io
 import json
 import os
@@ -46,28 +46,6 @@ def decode(content):
             raw=archive.read(matches[0]).decode('utf-8')
             output.append(raw if name.endswith('.html') else json.loads(raw))
         return tuple(output)
-
-
-def latest():
-    repo = os.environ['SOURCE_REPOSITORY']
-    branch = os.environ['SOURCE_BRANCH']
-    token = os.environ['SOURCE_ACTIONS_TOKEN']
-    base = 'https://api.github.com/repos/'+repo
-    query = urllib.parse.urlencode({'branch': branch, 'status': 'success', 'per_page': 30})
-    result = request('GET', base+'/actions/runs?'+query, token)
-    if result is None:
-        raise RuntimeError('Source repository is unavailable')
-    for run in result['workflow_runs']:
-        if run.get('event') != 'workflow_dispatch':
-            continue
-        artifacts = request('GET', base+'/actions/runs/'+str(run['id'])+'/artifacts?per_page=100', token)
-        matches = [a for a in artifacts['artifacts']
-                   if a['name'] == 'model-cycles' and not a['expired']]
-        if len(matches) == 1:
-            return {'run_id': run['id'], 'attempt': run['run_attempt'],
-                    'artifact_id': matches[0]['id'], 'commit': run['head_sha'],
-                    'url': matches[0]['archive_download_url']}
-    return None
 
 
 def bundle(content):
@@ -131,7 +109,7 @@ def available():
         raise RuntimeError('History exceeds discovery window; backfill before continuing')
     found=[]
     for run in runs:
-        if run.get('event')!='workflow_dispatch' or run.get('conclusion') not in ('success','failure','timed_out'):continue
+        if run.get('event')!='workflow_dispatch':continue
         result=request('GET',base+'/actions/runs/'+str(run['id'])+'/artifacts?per_page=100',token)
         if result is None:raise RuntimeError('Cannot read source artifacts')
         matches=[a for a in result['artifacts'] if re.fullmatch(r'model-cycles(?:-[1-9][0-9]*)?',a['name']) and not a['expired']]

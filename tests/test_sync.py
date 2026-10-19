@@ -31,3 +31,12 @@ class SyncTests(unittest.TestCase):
         publisher.api.assert_called_once_with('+release-list')
 
 if __name__=='__main__':unittest.main()
+
+class ExternalOperationTests(unittest.TestCase):
+    def test_credential_urls_do_not_escape_failure_or_timeout(self):
+        import subprocess
+        from publisher.sync import run
+        for failure in [Mock(returncode=1,stdout='https://user:PRIVATE_TOKEN@example.test',stderr=''),subprocess.TimeoutExpired(['git','https://user:PRIVATE_TOKEN@example.test'],1)]:
+            with patch('publisher.sync.subprocess.run',**({'side_effect':failure} if isinstance(failure,Exception) else {'return_value':failure})):
+                with self.assertRaises(RuntimeError) as error:run(['git','https://user:PRIVATE_TOKEN@example.test'])
+                self.assertNotIn('PRIVATE_TOKEN',str(error.exception))
