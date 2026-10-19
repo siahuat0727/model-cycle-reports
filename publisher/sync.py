@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from publisher import report, source, state, catalog
+from publisher import report, source, state, catalog, publication
 
 
 class ExternalOperationError(RuntimeError):
@@ -40,8 +40,10 @@ def dashboard_files():
 
 
 def dashboard_revision():
-    return catalog.digest({str(relative):hashlib.sha256(path.read_bytes()).hexdigest()
-                           for path,relative in dashboard_files()})
+    files={str(relative):hashlib.sha256(path.read_bytes()).hexdigest()
+           for path,relative in dashboard_files()}
+    files['publication.json']=sorted(publication.scene_ids())
+    return catalog.digest(files)
 
 
 class Publisher:
@@ -113,8 +115,12 @@ class Publisher:
             index=destination/'catalog.json'
             if index.exists():
                 entries=json.loads(index.read_text())['runs']
+            allowed=publication.scene_ids()
+            entries=[selected for entry in entries if (selected:=publication.select(entry,allowed))]
             for item in data:
-                entries,writes=catalog.append(entries,item['run'])
+                selected=publication.select(item['run'],allowed)
+                if selected is None:continue
+                entries,writes=catalog.append(entries,selected)
                 for scene in writes:
                     documents=report.rank_documents(item['reports'][scene['scene_id']],
                                                     [r['rank'] for r in scene['ranks']])
@@ -122,6 +128,7 @@ class Publisher:
                         target=destination/scene['details'][rank]
                         target.parent.mkdir(parents=True,exist_ok=True)
                         target.write_text(report.sanitize(rendered,item['run']),encoding='utf-8')
+            publication.prune_details(destination,entries)
             report.write_catalog(destination,entries)
             # The public repository owns the dashboard source; the Miaoda repo
             # supplies its platform scaffold and dependencies.

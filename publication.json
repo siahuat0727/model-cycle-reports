@@ -1,0 +1,7 @@
+{
+  "scene_ids": [
+    "qwen35-08b-b1-ctx18",
+    "qwen35-08b-b1-ctx85000",
+    "qwen36-35b-fp8-tp2-b1-ctx6-synthetic"
+  ]
+}
