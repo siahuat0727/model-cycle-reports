@@ -55,9 +55,9 @@ function TrendChart({items,rank,onSelect,selected}:{items:Observation[];rank:num
     {valid.map(item=><g key={item.run.report_id}>
       <circle cx={x(item)} cy={y(item)} r={selected===item.run.report_id?8:5} fill={item.scene.same_as?"#fff":"#6763d9"} stroke="#6763d9" strokeWidth="2"
         role={item.scene.same_as?"img":"button"} tabIndex={item.scene.same_as?undefined:0}
-        aria-label={`${date(item.run.created_at)}，${format(ms(item.scene.ranks.find(r=>r.rank===rank)!.mean_step_cycles,item.scene.frequency_mhz))} ms/step${item.scene.same_as?"，与上次相同":"，选择记录"}`}
+        aria-label={`${date(item.run.created_at)}，${format(ms(item.scene.ranks.find(r=>r.rank===rank)!.mean_step_cycles,item.scene.frequency_mhz))} ms/step${item.scene.same_as?"，与已有记录相同":"，选择记录"}`}
         onClick={item.scene.same_as?undefined:()=>onSelect(item.run.report_id)} onKeyDown={e=>{if(!item.scene.same_as&&(e.key==="Enter"||e.key===" ")){e.preventDefault();onSelect(item.run.report_id);}}}>
-        <title>{date(item.run.created_at)} · {format(ms(item.scene.ranks.find(r=>r.rank===rank)!.mean_step_cycles,item.scene.frequency_mhz))} ms/step{item.scene.same_as?" · 与上次相同，复用已有详情":""}</title>
+        <title>{date(item.run.created_at)} · {format(ms(item.scene.ranks.find(r=>r.rank===rank)!.mean_step_cycles,item.scene.frequency_mhz))} ms/step{item.scene.same_as?" · 与已有记录相同，复用已有详情":""}</title>
       </circle>
     </g>)}
     <text x="75" y="260">{date(items[0].run.created_at)}</text><text x="945" y="260" textAnchor="end">{items.length>1?date(items.at(-1)!.run.created_at):""}</text>
@@ -117,7 +117,7 @@ export default function App() {
           return <div className={`bar-row ${selected?.run.report_id===item.run.report_id&&tab==="trend"?"selected":""}`} key={`${item.run.report_id}-${item.scene.scene_id}`}>
             <div className="bar-label"><strong>{tab==="compare"?`context ${item.scene.parameters.context.toLocaleString("en-US")}`:date(item.run.created_at)}</strong><small>{tab==="compare"?`B${item.scene.parameters.batch} · ${item.scene.parameters.dtype}`:item.run.commit.slice(0,8)}</small></div>
             <div>{r?<Modules rank={r} scene={item.scene} max={max} relative={relative}/>:<span className="muted">{item.scene.status==="passed"?"此场景无该 rank":states[item.scene.status]}</span>}
-              {tab==="trend"&&<small className="bar-annotation">{item.scene.same_as?"与上次相同 · 复用已有详情":changed?"环境或测量条件变化":""}</small>}</div>
+              {tab==="trend"&&<small className="bar-annotation">{item.scene.same_as?"与已有记录相同 · 复用已有详情":changed?"环境或测量条件变化":""}</small>}</div>
             <div className="bar-value">{r?<><strong>{format(ms(r.mean_step_cycles,item.scene.frequency_mhz))}</strong><small>ms/step</small></>:<Status scene={item.scene}/>}</div>
             <button className="text-button" disabled={!r||Boolean(item.scene.same_as)} onClick={()=>navigate({view:"detail",scene:item.scene.scene_id,run:item.run.report_id})}>{item.scene.same_as?"结果相同":"详情 ↗"}</button>
           </div>;})}{!bars.length&&<Empty>选择至少一个场景进行对比。</Empty>}</div>
@@ -127,7 +127,7 @@ export default function App() {
         {selected.scene.status==="passed"&&<button className="text-button" onClick={()=>navigate({view:"detail",run:selected.run.report_id})}>{selected.scene.same_as?"查看复用的详情 ↗":"查看完整详情 ↗"}</button>}</div>}
       {tab==="detail"&&selected&&<>
         <div className="detail-intro"><Status scene={selected.scene}/><span>{date(selected.run.created_at)} · commit {selected.run.commit.slice(0,12)}</span><span>{label(selected.scene)}</span></div>
-        {selected.scene.same_as&&<div className="notice">本次性能结果与上次相同，下面复用已有详情。当前 CI 的时间、版本和环境仍独立保留；详情内的采集来源对应原记录。</div>}
+        {selected.scene.same_as&&<div className="notice">本次性能结果与已有记录相同，下面复用已有详情。当前 CI 的时间、版本和环境仍独立保留；详情内的采集来源对应原记录。</div>}
         {selectedRank?<>
           <div className="metrics"><div><span>常规 decode</span><strong>{format(ms(selectedRank.mean_step_cycles,selected.scene.frequency_mhz))}<small>ms/step</small></strong><p>{selectedRank.step_count} 个非结束 step · Rank {rank}</p></div>
             <div><span>算子加权基线 · Rank {selected.scene.probe_rank}</span><strong>{selected.scene.probe_baseline_cycles!==null?format(ms(selected.scene.probe_baseline_cycles,selected.scene.frequency_mhz)):"—"}<small>ms/step</small></strong><p>独立 probes × 调用次数 × 层数</p></div>
@@ -135,7 +135,7 @@ export default function App() {
           <section className="panel"><div className="panel-heading"><div><h2>模块时间与占比</h2><p>当前场景 · 当前记录 · Rank {rank}</p></div></div><Modules rank={selectedRank} scene={selected.scene}/><ModuleTable scene={selected.scene} rank={selectedRank}/></section>
         </>:<Empty>{selected.scene.status==="dependency_unavailable"?"上游依赖尚未就绪，本次没有生成性能数值。依赖合并后 rerun 即可补充。":selected.scene.status==="failed"?"本场景执行失败。未生成有效性能数值，请查看源 CI 诊断。":"此场景无所选 rank 的测量。"}</Empty>}
         <details className="environment"><summary>测量条件与来源</summary><p>{selected.scene.protocol} · {selected.scene.frequency_mhz} MHz · seed {selected.scene.parameters.seed} · {selected.scene.parameters.fixture}</p>
-          <dl>{Object.entries(selected.scene.environment).map(([name,value])=><div key={name}><dt>{name}</dt><dd>{value??"历史记录未提供"}</dd></div>)}</dl></details>
+          <dl>{Object.entries(selected.scene.environment).map(([name,value])=><div key={name}><dt>{name}</dt><dd>{value??"未记录"}</dd></div>)}</dl></details>
         {detail&&<section className="panel report-panel"><div className="panel-heading"><div><h2>完整测量报告</h2><p>Block、kernel 与执行阶段</p></div><a href={`${base}${detail}`} target="_blank" rel="noreferrer">独立打开 ↗</a></div><iframe title="完整测量报告" src={`${base}${detail}`} sandbox=""/></section>}
       </>}
     </>}</main><footer className="site-footer">C++ simulator 测量 · 每个时间点对应一次真实执行 · 合成数据不用于模型质量验收</footer></div>;
