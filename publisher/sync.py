@@ -11,6 +11,12 @@ import time
 from publisher import report, source, state, catalog
 
 
+class ExternalOperationError(RuntimeError):
+    def __init__(self, message, private_detail):
+        super().__init__(message)
+        self.private_detail = private_detail
+
+
 def run(args, cwd=None, timeout=300):
     env = {k:v for k,v in os.environ.items() if k not in {
         'GH_TOKEN','GITHUB_TOKEN','SOURCE_ACTIONS_TOKEN','STATE_KEY',
@@ -21,7 +27,9 @@ def run(args, cwd=None, timeout=300):
     except subprocess.TimeoutExpired:
         raise RuntimeError('External operation timed out: '+args[0]) from None
     if result.returncode:
-        raise RuntimeError('External operation failed: '+args[0]+' (exit '+str(result.returncode)+')')
+        operation = ' '.join(args[:3]) if args[:2]==['lark-cli','apps'] else args[0]
+        raise ExternalOperationError('External operation failed: '+operation+' (exit '+str(result.returncode)+')',
+                                     (result.stdout+result.stderr)[-5000:])
     return result.stdout
 
 
@@ -190,7 +198,8 @@ def main():
         if transport_errors:raise RuntimeError('Some artifact downloads failed; next poll will retry')
         payload.pop('diagnostic',None)
     except Exception as error:
-        payload['diagnostic']={'type':type(error).__name__,'detail':str(error)[-5000:]}
+        payload['diagnostic']={'type':type(error).__name__,'operation':str(error)[:300],
+                               'detail':getattr(error,'private_detail',str(error))[-5000:]}
         raise
     finally:
         # OAuth refreshes must survive errors, otherwise unattended publishing breaks.
