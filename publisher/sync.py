@@ -33,6 +33,17 @@ def run(args, cwd=None, timeout=300):
     return result.stdout
 
 
+def dashboard_files():
+    root=Path(__file__).resolve().parents[1]/'web'
+    return [(path,path.relative_to(root)) for path in sorted(root.rglob('*'))
+            if path.suffix in ('.ts','.tsx','.css') and 'node_modules' not in path.relative_to(root).parts]
+
+
+def dashboard_revision():
+    return catalog.digest({str(relative):hashlib.sha256(path.read_bytes()).hexdigest()
+                           for path,relative in dashboard_files()})
+
+
 class Publisher:
     def __init__(self, payload, sha):
         self.payload, self.sha = payload, sha
@@ -58,6 +69,8 @@ class Publisher:
             if status == 'finished':
                 if release.get('commit_id') != pending['commit']:
                     raise RuntimeError('Published commit differs from requested commit')
+                if pending.get('dashboard_revision'):
+                    self.payload['dashboard_revision']=pending['dashboard_revision']
                 self.payload['published_sources'] = list(dict.fromkeys([*self.payload.get('published_sources', []), *pending.get('sources', [])]))
                 self.payload.update(last_source=pending['source'],
                                     published_commit=pending['commit'],
@@ -112,10 +125,8 @@ class Publisher:
             report.write_catalog(destination,entries)
             # The public repository owns the dashboard source; the Miaoda repo
             # supplies its platform scaffold and dependencies.
-            web=Path(__file__).resolve().parents[1]/'web'
-            for file in web.rglob('*'):
-                if file.suffix not in ('.ts','.tsx','.css') or 'node_modules' in file.relative_to(web).parts:continue
-                target=repo/'src'/file.relative_to(web)
+            for file,relative in dashboard_files():
+                target=repo/'src'/relative
                 target.parent.mkdir(parents=True,exist_ok=True)
                 shutil.copy2(file,target)
             files={p.relative_to(destination).as_posix():hashlib.sha256(p.read_bytes()).hexdigest()
@@ -135,6 +146,7 @@ class Publisher:
                 run(['git','push','origin','HEAD:sprint/default'],cwd=repo)
             commit=run(['git','rev-parse','HEAD'],cwd=repo).strip()
         self.payload['unconfirmed']={'source':source_key,'sources':sources,'commit':commit,
+                                    'dashboard_revision':dashboard_revision(),
                                     'files':files,'started_ms':int(time.time()*1000)}
         self.persist()
         release=self.api('+release-create','--branch','sprint/default')
@@ -191,7 +203,10 @@ def main():
         data,transport_errors=collect(source.available(),payload)
         if not data:
             if transport_errors:raise RuntimeError('Artifact download failed; next poll will retry')
-            print('No unpublished completed measurement artifacts')
+            if payload.get('published_sources') and payload.get('dashboard_revision')!=dashboard_revision():
+                publisher.publish([],payload['last_source'])
+            else:
+                print('No unpublished measurements or dashboard changes')
             return
         source_key=data[-1]['source_key'].split(':')
         publisher.publish(data,[int(value) for value in source_key])

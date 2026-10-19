@@ -40,3 +40,11 @@ class ExternalOperationTests(unittest.TestCase):
             with patch('publisher.sync.subprocess.run',**({'side_effect':failure} if isinstance(failure,Exception) else {'return_value':failure})):
                 with self.assertRaises(RuntimeError) as error:run(['git','https://user:PRIVATE_TOKEN@example.test'])
                 self.assertNotIn('PRIVATE_TOKEN',str(error.exception))
+
+class DashboardRevisionTests(unittest.TestCase):
+    def test_release_records_ui_revision_only_after_completion(self):
+        payload={'app_id':'test','pending':{'release_id':'release','commit':'a'*40,'source':[1,1,2],
+                 'sources':[],'files':{},'dashboard_revision':'revision'}}
+        publisher=Publisher(payload,'sha');publisher.api=Mock(return_value={'status':'finished','commit_id':'a'*40});publisher.persist=Mock()
+        publisher.complete();self.assertEqual(payload['dashboard_revision'],'revision')
+        self.assertEqual(payload['published_sources'],[])
