@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "suite_id": "legacy-single-scene",
+  "run": {
+    "commit": "0b0de552ac0590aa5b3cb6fa58a6f6336fb726c2",
+    "created_at": "2026-10-16T07:35:44.166151+00:00"
+  },
+  "scenes": [
+    {
+      "scene_id": "qwen35-08b-b1-ctx18",
+      "model_id": "qwen35-08b",
+      "model": "Qwen3.5-0.8B",
+      "parameters": {
+        "batch": 1,
+        "context": 18,
+        "dtype": "bfloat16",
+        "tp": 1,
+        "seed": 42,
+        "decode_steps": 3,
+        "geometry": {
+          "hidden": 1024,
+          "intermediate": 3584,
+          "vocab": 248320,
+          "cores": 2,
+          "gdn_heads": 16,
+          "gdn_dim": 128,
+          "gdn_conv_k": 4,
+          "gqa_query_heads": 8,
+          "gqa_kv_heads": 2,
+          "gqa_dim": 256,
+          "rotary_dim": 64,
+          "rope_capacity": 262144,
+          "page_size": 1024,
+          "token_capacity": 4096,
+          "request_pool_size": 4,
+          "request_token_capacity": 262148
+        },
+        "layers": [
+          "GDN",
+          "GDN",
+          "GDN",
+          "GQA",
+          "GDN",
+          "GDN",
+          "GDN",
+          "GQA",
+          "GDN",
+          "GDN",
+          "GDN",
+          "GQA",
+          "GDN",
+          "GDN",
+          "GDN",
+          "GQA",
+          "GDN",
+          "GDN",
+          "GDN",
+          "GQA",
+          "GDN",
+          "GDN",
+          "GDN",
+          "GQA"
+        ],
+        "token": 96328,
+        "precision": {},
+        "ep": 1,
+        "quantization": "none",
+        "fixture": "synthetic"
+      },
+      "protocol": "cpp-cycles-regular-decode-v1",
+      "comparison_key": "288d2e14eeb13ce255ea1ee53474a4a559c7b46c8adb0e52c8f03f6393d2d8ef",
+      "frequency_mhz": 400,
+      "status": "passed",
+      "environment": {
+        "torch": "2.10.0+cpu",
+        "triton": "3.6.0",
+        "simulator_sha256": "e3130ffa6bb861928c5ddb11eb72e1e2f2d42cbfd75b470291f4725d4b3ae028",
+        "native_extension_sha256": "ddd137e256f65a2f9fd2300b5841cae6e48be3cbedf33467a239e281f3727dc7",
+        "sgl_adapter_sha256": "6bef987d65052e504e865893ba9c88f3ec3a2ed37c71884a6d38c056dd5aee71",
+        "toolchain_fingerprint": "890e3b01e7808bd0771304c04053e01b8e495fcef73f294285cf68ff46473f2e",
+        "sglang_commit": "8dfbac78c9ad89cfcf9e5bff7925fb66b8fd2c49",
+        "devexample_commit": "e0d785fd690c26c184e58042e235a85d8dd81bb6"
+      },
+      "probe_baseline_cycles": 10151829,
+      "probe_rank": 0,
+      "ranks": [
+        {
+          "rank": 0,
+          "step_count": 2,
+          "sample_cycles": [
+            10181583,
+            10181583
+          ],
+          "module_cycles": {
+            "辅助": 736544,
+            "Embedding": 8222,
+            "Norm": 266228,
+            "GDN": 17306172,
+            "DenseFFN": 315456,
+            "GQA": 1431120,
+            "LMHead": 252500,
+            "Sampling": 46924
+          },
+          "mean_step_cycles": 10181583.0
+        }
+      ]
+    }
+  ]
+}

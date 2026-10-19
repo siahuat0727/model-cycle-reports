@@ -30,3 +30,13 @@ python -m unittest discover -s tests -v
 ```
 
 前端验证在妙搭脚手架中执行 `npm run typecheck`、`npm run lint:eslint` 和 `npm run build`。`web/lib/report-path.ts` 保持平台子路径兼容。测量为 C++ CycleSim，并非真实硬件或完整设备 E2E latency。
+
+网站数据契约与类型检查可独立运行，无需飞书登录或妙搭脚手架：
+
+```sh
+npm --prefix web ci --ignore-scripts --no-audit --no-fund
+npm --prefix web run typecheck
+npm --prefix web test
+```
+
+CI 会执行上述检查。测试 fixture 是已验证的旧短场景白名单摘要，用来约束历史迁移到网站的数据契约；浏览器交互和平台完整构建另外验证。

@@ -104,7 +104,12 @@ class Publisher:
             report.write_catalog(destination,entries)
             # The public repository owns the dashboard source; the Miaoda repo
             # supplies its platform scaffold and dependencies.
-            shutil.copytree(Path(__file__).resolve().parents[1]/'web',repo/'src',dirs_exist_ok=True)
+            web=Path(__file__).resolve().parents[1]/'web'
+            for file in web.rglob('*'):
+                if file.suffix not in ('.ts','.tsx','.css') or 'node_modules' in file.relative_to(web).parts:continue
+                target=repo/'src'/file.relative_to(web)
+                target.parent.mkdir(parents=True,exist_ok=True)
+                shutil.copy2(file,target)
             files={p.relative_to(destination).as_posix():hashlib.sha256(p.read_bytes()).hexdigest()
                    for p in destination.rglob('*') if p.is_file()}
             run(['npm','ci','--registry=https://registry.npmjs.org','--no-audit','--no-fund'],cwd=repo,timeout=900)
