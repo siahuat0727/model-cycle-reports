@@ -5,7 +5,7 @@ const rank = z.object({rank: cycles, sample_cycles: z.array(cycles), step_count:
   module_cycles: z.record(z.string(), cycles), mean_step_cycles: z.number().nonnegative()});
 export const sceneSchema = z.object({scene_id: z.string(), model_id: z.string(), model: z.string(),
   parameters: z.object({batch: z.number(), context: z.number(), dtype: z.string(), tp: z.number(), ep: z.number(),
-    quantization: z.string(), fixture: z.string(), seed: z.number(), decode_steps: z.number(), geometry: z.record(z.string(), z.number())}),
+    quantization: z.string(), fixture: z.string(), seed: z.number(), decode_steps: z.number(), geometry: z.record(z.string(), z.number()), token: cycles, precision: z.record(z.string(), z.union([z.number(), z.boolean()]))}),
   protocol: z.string(), comparison_key: z.string(), frequency_mhz: z.number().positive(),
   status: z.enum(["passed", "failed", "dependency_unavailable"]),
   reason: z.string().nullable().optional(), environment: z.record(z.string(), z.string().nullable()),
@@ -28,7 +28,7 @@ export const date = (value: string) => new Date(value).toLocaleString("zh-CN",{m
 export const label = (scene: Scene) => `B${scene.parameters.batch} · context ${scene.parameters.context.toLocaleString("en-US")} · TP${scene.parameters.tp}`;
 export const states = {passed:"已测量",failed:"执行失败",dependency_unavailable:"依赖未就绪"};
 export function toolchainEqual(a: Scene,b: Scene) {
-  return ["torch","triton","simulator_sha256"].every(key => a.environment[key] === b.environment[key]);
+  return ["torch","triton","simulator_sha256","toolchain_fingerprint"].every(key => a.environment[key] === b.environment[key]);
 }
 export function observations(runs: Run[],model: string,scene: string): Observation[] {
   return runs.flatMap(run=>run.scenes.filter(s=>s.model_id===model && s.scene_id===scene).map(s=>({run,scene:s})));

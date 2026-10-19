@@ -45,11 +45,16 @@ def validate_scene(raw):
     status=raw['status']
     if status not in ('passed','failed','dependency_unavailable'):raise ValueError('Invalid scene status')
     params=raw['parameters']
-    expected=('batch','context','dtype','tp','ep','quantization','fixture','seed','decode_steps','geometry')
+    expected=('batch','context','dtype','tp','ep','quantization','fixture','seed','decode_steps','geometry','token','precision')
     clean={k:params[k] for k in expected}
     for key in ('batch','context','tp','ep','decode_steps'):
         if type(clean[key]) is not int or not 0<clean[key]<2**31:raise ValueError('Invalid scene dimension')
     if type(clean['seed']) is not int or not 0<=clean['seed']<2**53:raise ValueError('Invalid seed')
+    clean['token']=cycles(clean['token'])
+    if set(clean['precision'])-{'cuda_route_rounding','gdn_conv_tlayout','gdn_silu_mode'}:raise ValueError('Unknown precision setting')
+    for key,value in clean['precision'].items():
+        if key=='gdn_silu_mode':cycles(value)
+        elif type(value) is not bool:raise ValueError('Invalid precision flag')
     for key in ('dtype','quantization','fixture'):clean[key]=identifier(clean[key])
     if not isinstance(clean['geometry'],dict) or len(clean['geometry'])>50:raise ValueError('Invalid geometry')
     clean['geometry']={identifier(k):cycles(v) for k,v in clean['geometry'].items()}
@@ -59,7 +64,7 @@ def validate_scene(raw):
     comparison=dict(model_id=model_id,parameters=clean,protocol=protocol,frequency_mhz=frequency)
     if raw['comparison_key']!=digest(comparison):raise ValueError('Comparison key mismatch')
     environment={k:text(v) if v is not None else None for k,v in raw.get('environment',{}).items()
-                 if k in ('torch','triton','simulator_sha256','native_extension_sha256','sgl_adapter_sha256','sglang_commit','devexample_commit','kernel_commit')}
+                 if k in ('torch','triton','simulator_sha256','native_extension_sha256','sgl_adapter_sha256','sglang_commit','devexample_commit','kernel_commit','toolchain_fingerprint')}
     ranks=[]
     for rank in raw['ranks']:
         samples=[cycles(v) for v in rank['sample_cycles']]
@@ -93,7 +98,7 @@ def fingerprint(scene):
     # detail reuse when measured values are identical across code changes.
     return digest(dict(comparison=scene['comparison_key'],ranks=scene['ranks'],
         baseline=scene['probe_baseline_cycles'],probe_rank=scene['probe_rank'],
-        toolchain={k:scene['environment'].get(k) for k in ('torch','triton','simulator_sha256')}))
+        toolchain={k:scene['environment'].get(k) for k in ('torch','triton','simulator_sha256','toolchain_fingerprint')}))
 
 
 def append(catalog, run):

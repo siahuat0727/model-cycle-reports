@@ -128,33 +128,58 @@ class Publisher:
         self.complete()
 
 
+def collect(candidates, payload):
+    """One malformed historical artifact must not block later valid runs."""
+    seen={key.rsplit(':',1)[-1] for key in payload.get('published_sources',[])}
+    rejected=payload.setdefault('rejected_sources',{})
+    data,transport_errors=[],[]
+    for latest in candidates:
+        artifact=str(latest['artifact_id'])
+        if artifact in seen or artifact in rejected:continue
+        try:
+            content=source.download(latest['url'],os.environ['SOURCE_ACTIONS_TOKEN'])
+        except Exception as exc:
+            transport_errors.append(type(exc).__name__)
+            continue  # Retry transport failures on the next poll.
+        try:
+            document,reports=source.bundle(content)
+            execution=document['run']
+            if execution.get('run_id') is not None and str(execution['run_id'])!=str(latest['run_id']):
+                raise ValueError('Artifact run identity does not match CI')
+            attempt=int(execution.get('attempt',latest.get('attempt') or 1))
+            if attempt<1 or latest.get('attempt') is not None and attempt!=latest['attempt']:
+                raise ValueError('Artifact attempt does not match named artifact')
+            info=report.metadata(dict(commit=latest['commit'],created_at=execution['created_at']),
+                                 state.public_id(latest['run_id'],attempt))
+            item=catalog.validate(document,info)
+            # Reject unsafe detail pages before staging any release. Raw HTML
+            # remains untrusted; publish applies the same sanitizer when writing.
+            for scene in item['scenes']:
+                if scene['status']=='passed':
+                    docs=report.rank_documents(reports[scene['scene_id']],[r['rank'] for r in scene['ranks']])
+                    for rendered in docs.values():report.sanitize(rendered,info)
+            key=':'.join(map(str,[latest['run_id'],attempt,latest['artifact_id']]))
+            data.append(dict(run=item,reports=reports,source_key=key))
+        except Exception as exc:
+            rejected[artifact]=dict(type=type(exc).__name__,reason=str(exc)[-1000:])
+            print('::warning::Invalid historical artifact isolated; diagnostic retained in encrypted publisher state')
+    return data,transport_errors
+
+
 def main():
     payload,sha=state.load()
     state.restore_credentials(payload['credentials'])
     publisher=Publisher(payload,sha)
     try:
         publisher.resume()
-        candidates=source.available()
-        seen=set(payload.get('published_sources',[]))
-        data=[]
-        for latest in candidates:
-            source_key=[latest[k] for k in ['run_id','attempt','artifact_id']]
-            key=':'.join(map(str,source_key))
-            if key in seen:continue
-            document,reports=source.bundle(source.download(latest['url'],os.environ['SOURCE_ACTIONS_TOKEN']))
-            execution=document['run']
-            if execution.get('run_id') is not None and str(execution['run_id'])!=str(latest['run_id']):
-                raise RuntimeError('Artifact run identity does not match CI')
-            if execution.get('attempt') is not None and str(execution['attempt'])!=str(latest['attempt']):
-                raise RuntimeError('Artifact attempt does not match completed run')
-            info=report.metadata(dict(commit=latest['commit'],created_at=execution['created_at']),
-                                 state.public_id(latest['run_id'],latest['attempt']))
-            item=catalog.validate(document,info)
-            data.append(dict(run=item,reports=reports,source_key=key))
+        data,transport_errors=collect(source.available(),payload)
         if not data:
+            if transport_errors:raise RuntimeError('Artifact download failed; next poll will retry')
             print('No unpublished completed measurement artifacts')
             return
-        publisher.publish(data,source_key)
+        source_key=data[-1]['source_key'].split(':')
+        publisher.publish(data,[int(value) for value in source_key])
+        if transport_errors:raise RuntimeError('Some artifact downloads failed; next poll will retry')
         payload.pop('diagnostic',None)
     except Exception as error:
         payload['diagnostic']={'type':type(error).__name__,'detail':str(error)[-5000:]}

@@ -2,6 +2,7 @@
 import io
 import json
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -93,7 +94,7 @@ def bundle(content):
         # Migration reads upstream aggregate values. Never reconstruct from logs
         # or infer a fake earlier timestamp from the new run.
         params={k:cfg[k] for k in ('batch','context','dtype','tp','seed','decode_steps','geometry')}
-        params.update(ep=cfg.get('ep',1),quantization=cfg.get('quantization','none'),
+        params.update(token=cfg['token'],precision=cfg.get('precision',{}),ep=cfg.get('ep',1),quantization=cfg.get('quantization','none'),
                       fixture=cfg.get('framework',{}).get('fixture','synthetic'))
         model_id=cfg.get('model_id')
         if model_id is None:
@@ -104,6 +105,7 @@ def bundle(content):
         comparison=dict(model_id=model_id,parameters=params,protocol=protocol,frequency_mhz=cfg['frequency_mhz'])
         fm=fw.get('manifest',{});view=raw['regular_decode']
         env={k:manifest.get(k) for k in ('torch','triton','simulator_sha256','native_extension_sha256','sgl_adapter_sha256')}
+        env['toolchain_fingerprint']=catalog.digest({k:manifest.get(k) for k in ('release_metadata','compiler_flags','simulator_sha256')})
         env.update({k+'_commit':fm.get(k,{}).get('commit') for k in ('sglang','devexample')})
         scene=dict(scene_id=cfg['id'],model_id=model_id,model=cfg['model'],parameters=params,
             protocol=protocol,comparison_key=catalog.digest(comparison),frequency_mhz=cfg['frequency_mhz'],
@@ -111,7 +113,7 @@ def bundle(content):
             ranks=[dict(rank=0,step_count=view['step_count'],sample_cycles=view['sample_cycles'],
                         module_cycles=view['modules'],mean_step_cycles=view['mean_step_cycles'])])
         return dict(schema_version=1,suite_id='legacy-single-scene',run=dict(commit=manifest['commit'],
-                    created_at=manifest['created_at']),scenes=[scene]),{scene['scene_id']:rendered}
+                    created_at=manifest['created_at'],run_id=manifest.get('run_id'),attempt=manifest.get('run_attempt','1')),scenes=[scene]),{scene['scene_id']:rendered}
 
 
 def available():
@@ -132,14 +134,10 @@ def available():
         if run.get('event')!='workflow_dispatch' or run.get('conclusion') not in ('success','failure','timed_out'):continue
         result=request('GET',base+'/actions/runs/'+str(run['id'])+'/artifacts?per_page=100',token)
         if result is None:raise RuntimeError('Cannot read source artifacts')
-        matches=[a for a in result['artifacts'] if a['name']=='model-cycles' and not a['expired']]
-        if len(matches)>1:raise RuntimeError('Ambiguous source artifacts')
-        if matches:
-            artifact=matches[0]
-            if artifact.get('created_at') and run.get('run_started_at') and artifact['created_at'] < run['run_started_at']:
-                continue  # This artifact belongs to an earlier attempt.
-            # A rerun's old artifact can outlive the rerun; bind to the artifact
-            # creation time and workflow_run head, not an unverified latest attempt.
-            found.append(dict(run_id=run['id'],attempt=run['run_attempt'],artifact_id=artifact['id'],
-                commit=run['head_sha'],url=artifact['archive_download_url'],created_at=run['created_at']))
-    return sorted(found,key=lambda r:(r['created_at'],r['run_id'],r['attempt']))
+        matches=[a for a in result['artifacts'] if re.fullmatch(r'model-cycles(?:-[1-9][0-9]*)?',a['name']) and not a['expired']]
+        for artifact in matches:
+            suffix=artifact['name'].removeprefix('model-cycles')
+            attempt=int(suffix[1:]) if suffix else None
+            found.append(dict(run_id=run['id'],attempt=attempt,artifact_id=artifact['id'],
+                commit=run['head_sha'],url=artifact['archive_download_url'],created_at=artifact.get('created_at',run['created_at'])))
+    return sorted(found,key=lambda r:(r['created_at'],r['run_id'],r['attempt'] or 1))

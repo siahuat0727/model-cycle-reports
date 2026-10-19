@@ -10,7 +10,7 @@ from publisher import catalog, report, source
 
 
 def scene():
-    parameters=dict(batch=1,context=18,dtype='bfloat16',tp=1,ep=1,quantization='none',fixture='synthetic',seed=42,decode_steps=3,geometry={'hidden':1024})
+    parameters=dict(batch=1,context=18,dtype='bfloat16',tp=1,ep=1,quantization='none',fixture='synthetic',seed=42,decode_steps=3,geometry={'hidden':1024},token=271,precision={})
     compare=dict(model_id='qwen35-08b',parameters=parameters,protocol=catalog.PROTOCOL,frequency_mhz=400)
     return dict(scene_id='short',model_id='qwen35-08b',model='Qwen3.5-0.8B',parameters=parameters,protocol=catalog.PROTOCOL,
         frequency_mhz=400,comparison_key=catalog.digest(compare),status='passed',environment={'triton':'3.6.0','simulator_sha256':'a'*64},
@@ -80,3 +80,22 @@ class CatalogTests(unittest.TestCase):
             i=int(url.split('/runs/')[1].split('/')[0]);return {'artifacts':[dict(id=i,name='model-cycles',expired=False,archive_download_url='https://example.test')]}
         with patch.dict('os.environ',env),patch('publisher.source.request',side_effect=request):
             self.assertEqual([r['run_id'] for r in source.available()],[1,2])
+
+class RetryTests(unittest.TestCase):
+    def test_each_attempt_is_discovered(self):
+        rows=[dict(id=1,run_attempt=2,head_sha='a'*40,created_at='2026-10-19T00:00:00Z',event='workflow_dispatch',conclusion='failure')]
+        artifacts=[dict(id=i,name=f'model-cycles-{i}',expired=False,archive_download_url='https://example.test') for i in (1,2)]
+        def request(method,url,token):return {'artifacts':artifacts} if '/artifacts?' in url else {'workflow_runs':rows}
+        with patch.dict('os.environ',dict(SOURCE_REPOSITORY='owner/repo',SOURCE_BRANCH='branch',SOURCE_ACTIONS_TOKEN='test')),patch('publisher.source.request',side_effect=request):
+            self.assertEqual([r['attempt'] for r in source.available()],[1,2])
+
+    def test_bad_history_is_isolated_and_later_success_survives(self):
+        from publisher.sync import collect
+        from test_publisher import HTML
+        candidates=[dict(run_id=i,attempt=1,artifact_id=i,commit='c'*40,url='https://example.test') for i in (1,2)]
+        document=dict(schema_version=1,run=dict(commit='c'*40,created_at='2026-10-19T01:00:00Z'),scenes=[scene()])
+        payload={}
+        with patch.dict('os.environ',{'SOURCE_ACTIONS_TOKEN':'test'}),patch('publisher.sync.source.download',return_value=b'data'),patch('publisher.sync.source.bundle',side_effect=[ValueError('Incomplete legacy result'),(document,{'short':HTML})]),patch('publisher.sync.state.public_id',return_value='b'*16):
+            data,errors=collect(candidates,payload)
+        self.assertEqual(len(data),1);self.assertEqual(data[0]['source_key'],'2:1:2')
+        self.assertIn('1',payload['rejected_sources']);self.assertEqual(errors,[])
