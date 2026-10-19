@@ -1,104 +1,101 @@
-"""Allowlisted numeric reports only: never republish source HTML, logs or manifests."""
-import csv
+"""Publish the CI report's layout and measurements as a passive, redacted document."""
 from datetime import datetime, timezone
 import html
-import io
 import json
-from pathlib import Path
 import re
+from lxml import etree
+from lxml import html as document
 
-CASES = {'embedding':'Embedding', 'rmsnorm':'Norm', 'add_rmsnorm':'Norm',
-         'gdn_in':'GDN', 'gdn_recurrent':'GDN', 'gdn_out':'GDN',
-         'gqa_qkv':'GQA', 'gqa_attention':'GQA', 'gqa_out':'GQA',
-         'dense_ffn':'DenseFFN', 'lm_head':'LMHead', 'greedy':'Sampling'}
-
-
-def number(value):
-    if value is None:
-        return None
-    if type(value) is not int or not 0 <= value <= 2**63-1:
-        raise ValueError('Invalid cycle counter')
-    return value
+TAGS = set('html head body title meta style main header footer section nav div span p a h1 h2 h3 h4 table thead tbody tfoot tr th td details summary pre code strong b small i em br hr ul ol li'.split())
+ATTRS = {'class','id','colspan','rowspan','open','role','aria-label','lang'}
+SENSITIVE = re.compile(r'(?:ou_|cli_|gh[pousr]_)[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|(?:https?://|/(?:workspace|home|root|opt|tmp|state)/)[^\s<>"\']+')
 
 
-def sanitize(raw, manifest, report_id):
+def metadata(manifest, report_id):
     if not re.fullmatch('[a-f0-9]{16}', report_id):
         raise ValueError('Invalid report identifier')
-    cases = []
-    seen = set()
-    for row in raw.get('cases', []):
-        cid = row.get('id')
-        if cid not in CASES or cid in seen:
-            raise ValueError('Unexpected or duplicate case')
-        seen.add(cid)
-        measured = row.get('status') == 'measured'
-        cycles = number(row.get('cycles')) if measured else None
-        if measured and cycles is None:
-            raise ValueError('Missing cycle counter')
-        cases.append({'id':cid, 'module':CASES[cid], 'cycles':cycles,
-                      'status':'measured' if measured else 'missing'})
-    if seen != set(CASES):
-        raise ValueError('Incomplete case inventory')
-    launches = []
-    for row in raw.get('launches', []):
-        cid = row.get('case')
-        if cid not in CASES:
-            raise ValueError('Unexpected launch case')
-        name = row.get('kernel', '')
-        if not re.fullmatch('[A-Za-z_][A-Za-z0-9_]{0,159}', name) or re.search(r'(?:ou_|cli_|gh[pousr]_)', name):
-            raise ValueError('Invalid kernel label')
-        measured = row.get('status') == 'measured'
-        launches.append({'case':cid, 'module':CASES[cid], 'kernel':name,
-            **{field:number(row.get(field)) if measured else None
-               for field in ['core0_cycles','core1_cycles','max_cycles']}})
-    for case in cases:
-        values = [r['max_cycles'] for r in launches if r['case'] == case['id']]
-        if case['status']=='measured' and (not values or any(v is None for v in values) or sum(values)!=case['cycles']):
-            raise ValueError('Case and launch counters disagree')
-    date = datetime.fromisoformat(manifest['created_at'].replace('Z','+00:00'))
-    if date.tzinfo is None:
-        raise ValueError('Missing timestamp timezone')
-    commit = manifest.get('commit','')
+    commit=manifest.get('commit','')
     if not re.fullmatch('[a-f0-9]{40}',commit):
         raise ValueError('Invalid source version')
-    # Do not copy free-form version labels, URLs, local paths, errors or raw metadata.
-    return {'report_id':report_id, 'model':'Qwen3.5-0.8B',
-            'created_at':date.astimezone(timezone.utc).isoformat(), 'commit':commit,
-            'measurement':'C++ CycleSim', 'cases':cases, 'launches':launches}
+    date=datetime.fromisoformat(manifest['created_at'].replace('Z','+00:00'))
+    if date.tzinfo is None:
+        raise ValueError('Missing timestamp timezone')
+    return {'report_id':report_id,'commit':commit,
+            'created_at':date.astimezone(timezone.utc).isoformat()}
 
 
-def write_report(data, destination):
-    destination.mkdir(parents=True, exist_ok=True)
-    (destination/'results.json').write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
-    with (destination/'results.csv').open('w',newline='',encoding='utf-8-sig') as stream:
-        w=csv.DictWriter(stream,fieldnames=['module','case','kernel','core0_cycles','core1_cycles','max_cycles'])
-        w.writeheader();w.writerows(data['launches'])
-    e=lambda x:html.escape(str(x),quote=True)
-    fmt=lambda x:'—' if x is None else f'{x:,}'
-    maximum=max((r['cycles'] for r in data['cases'] if r['cycles'] is not None),default=0)
-    sections=[]
-    for module in dict.fromkeys(CASES.values()):
-        bars=[]
-        for case in [r for r in data['cases'] if r['module']==module]:
-            width=100*case['cycles']/maximum if maximum and case['cycles'] is not None else 0
-            bars.append(f'<div class="case"><b>{e(case["id"])}</b><span>{fmt(case["cycles"])} cycles</span><div class="track"><div style="width:{width:.3f}%"></div></div></div>')
-        sections.append('<section><h2>'+module+'</h2>'+''.join(bars)+'</section>')
-    rows=''.join('<tr>'+''.join('<td>'+e(fmt(row[k]) if k.endswith('cycles') else row[k])+'</td>' for k in ['module','case','kernel','core0_cycles','core1_cycles','max_cycles'])+'</tr>' for row in data['launches'])
-    body=f'''<p><a href="../../index.html">全部结果</a> · <a href="results.csv">CSV</a> · <a href="results.json">结果数据</a></p><h1>Qwen3.5-0.8B · Cycles</h1>
-<p>{e(data['created_at'])} · 版本 <code>{e(data['commit'][:12])}</code></p>
-<p>固定 B1 / TP1 / BF16 算子探针。GQA attention 历史长度为1500。每次 launch 取各 core cycles 最大值，多 launch case 按执行顺序相加。包含 CT 与 kernel 内部 DMA，不含初始化、编译、H2D/D2H。不是完整模型耗时，不作数值正确性验收。</p>
-{''.join(sections)}<section><h2>Kernel 明细</h2><div class="scroll"><table><tr><th>模块</th><th>Case</th><th>Kernel</th><th>Core0</th><th>Core1</th><th>Max cycles</th></tr>{rows}</table></div></section>'''
-    (destination/'report.html').write_text(page('Qwen3.5-0.8B cycles',body),encoding='utf-8')
+def sanitize(source, info):
+    root=document.document_fromstring(source)
+    ids={node.get('id') for node in root.iter()}
+    if not {'blocks','modules','framework','evidence'} <= ids:
+        raise ValueError('Incomplete full model report')
+    # Version/config/diagnostic blocks may contain paths, identities and log excerpts.
+    for node in list(root.xpath('//details[.//pre] | //script | //iframe | //object | //embed | //link | //base | //form | //img | //svg')):
+        if node.getparent() is not None:
+            node.drop_tree()
+    for node in root.xpath('//comment()'):
+        node.getparent().remove(node)
+    for node in list(root.iter()):
+        if not isinstance(node.tag,str):
+            continue
+        if node.tag not in TAGS:
+            node.drop_tree()
+            continue
+        attrs=dict(node.attrib)
+        node.attrib.clear()
+        for key,value in attrs.items():
+            if key in ATTRS and not SENSITIVE.search(value):
+                node.set(key,value)
+            elif key=='href' and re.fullmatch(r'#[A-Za-z][A-Za-z0-9_-]*',value):
+                node.set(key,value)
+            elif key=='style':
+                if re.search(r'url\s*\(|@import|expression\s*\(|\\|[<]',value,re.I):
+                    raise ValueError('Active inline CSS is not allowed')
+                node.set(key,value)
+        if node.tag=='meta':
+            if attrs.get('charset'):
+                node.set('charset','utf-8')
+            elif attrs.get('name')=='viewport':
+                node.set('name','viewport');node.set('content','width=device-width,initial-scale=1')
+            else:
+                node.drop_tree()
+        if node.tag=='style' and re.search(r'url\s*\(|@import|expression\s*\(|\\|[<]',node.text or '',re.I):
+            raise ValueError('Active stylesheet is not allowed')
+        if node.text:
+            node.text=SENSITIVE.sub('[已隐藏]',node.text)
+        if node.tail:
+            node.tail=SENSITIVE.sub('[已隐藏]',node.tail)
+    # Replace private/raw-artifact links with safe collection provenance.
+    evidence=root.get_element_by_id('evidence')
+    for node in list(evidence.xpath('./p[contains(concat(" ", normalize-space(@class), " "), " hint ")]')):
+        node.drop_tree()
+    provenance=etree.Element('p',{'class':'hint'})
+    provenance.text=f'采集时间 {info["created_at"]} · 版本 {info["commit"][:12]}'
+    evidence.insert(1,provenance)
+    # The document is passive both in an iframe and when opened directly.
+    head=root.find('head')
+    policy=etree.Element('meta',{'http-equiv':'Content-Security-Policy',
+        'content':"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"})
+    head.insert(0,policy)
+    rendered=document.tostring(root,encoding='unicode',doctype='<!doctype html>')
+    if SENSITIVE.search(rendered):
+        raise ValueError('Private metadata remained in public HTML')
+    return rendered
 
 
-def page(title, body):
-    return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+html.escape(title)+'</title><style>body{font:15px/1.6 system-ui,sans-serif;margin:0;background:#f4f6fa;color:#182233}main{max-width:1100px;margin:auto;padding:28px}section{background:white;margin:18px 0;padding:20px;border-radius:12px}.case{margin:15px 0}.case span{float:right}.track{height:10px;background:#edf0f6;margin:6px 0;border-radius:5px}.track div{height:10px;background:#466ae7;border-radius:5px}table{border-collapse:collapse;width:100%;font-size:13px}td,th{padding:8px;text-align:left;border-bottom:1px solid #ddd;overflow-wrap:anywhere}.scroll{overflow:auto}a{color:#3156bc}code{overflow-wrap:anywhere}</style><main>'+body+'</main></html>'
+def write_report(source, info, destination):
+    rendered=sanitize(source,info)
+    destination.mkdir(parents=True,exist_ok=True)
+    (destination/'report.html').write_text(rendered,encoding='utf-8')
+    (destination/'metadata.json').write_text(json.dumps(info,ensure_ascii=False,indent=2)+'\n')
 
 
 def write_index(root, entries):
-    ordered=sorted(entries,key=lambda x:x['created_at'],reverse=True)
+    ordered=sorted(entries,key=lambda row:row['created_at'],reverse=True)
+    for item in ordered:
+        if not re.fullmatch('[a-f0-9]{16}',item['report_id']):
+            raise ValueError('Invalid report identifier')
     rows=''.join('<tr><td>'+html.escape(item['created_at'])+'</td><td><code>'+html.escape(item['commit'][:12])+'</code></td><td><a href="runs/'+item['report_id']+'/report.html">打开报告</a></td></tr>' for item in ordered)
-    latest='<p><a href="runs/'+ordered[0]['report_id']+'/report.html">打开最新结果</a></p>' if ordered else '<p>尚无结果</p>'
-    body='<h1>模型性能观测</h1><p>每次测速单独保存，不作历史涨跌比较。时间为 UTC。</p>'+latest+'<section><table><tr><th>运行时间</th><th>版本</th><th>结果</th></tr>'+rows+'</table></section>'
-    (root/'index.html').write_text(page('模型性能观测',body),encoding='utf-8')
+    body='<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>模型性能观测</title><style>body{font:15px/1.6 system-ui;padding:24px}td,th{padding:10px;border-bottom:1px solid #ddd;text-align:left}a{color:#3156bc}</style><h1>模型性能观测</h1><table><tr><th>采集时间（UTC）</th><th>版本</th><th>报告</th></tr>'+rows+'</table></html>'
+    (root/'index.html').write_text(body,encoding='utf-8')
     (root/'index.json').write_text(json.dumps(ordered,ensure_ascii=False,indent=2)+'\n')

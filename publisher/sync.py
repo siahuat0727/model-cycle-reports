@@ -75,6 +75,7 @@ class Publisher:
             self.complete()
 
     def publish(self, data, source_key):
+        info, rendered = data
         metadata=self.api('+git-credential-init')
         with tempfile.TemporaryDirectory(prefix='cycle-publisher-') as directory:
             repo=Path(directory)/'app'
@@ -88,9 +89,9 @@ class Publisher:
                 for item in entries:
                     if not re.fullmatch('[a-f0-9]{16}',item['report_id']):
                         raise RuntimeError('Invalid report index')
-            report.write_report(data,destination/'runs'/data['report_id'])
-            entries=[e for e in entries if e['report_id']!=data['report_id']]
-            entries.append({k:data[k] for k in ['report_id','created_at','commit']})
+            report.write_report(rendered,info,destination/'runs'/info['report_id'])
+            entries=[e for e in entries if e['report_id']!=info['report_id']]
+            entries.append(info)
             report.write_index(destination,entries)
             files={p.relative_to(destination).as_posix():hashlib.sha256(p.read_bytes()).hexdigest()
                    for p in destination.rglob('*') if p.is_file()}
@@ -132,10 +133,13 @@ def main():
         if payload.get('last_source')==source_key:
             print('Latest successful measurement is already published')
             return
-        raw,manifest=source.decode(source.download(latest['url'],os.environ['SOURCE_ACTIONS_TOKEN']))
+        raw,manifest,rendered=source.decode(source.download(latest['url'],os.environ['SOURCE_ACTIONS_TOKEN']))
         if manifest.get('commit')!=latest['commit']:
             raise RuntimeError('Artifact source version does not match CI run')
-        data=report.sanitize(raw,manifest,state.public_id(latest['run_id'],latest['attempt']))
+        if raw.get('framework',{}).get('status')!='measured' or not raw.get('regular_decode'):
+            raise RuntimeError('Full framework measurements are required')
+        info=report.metadata(manifest,state.public_id(latest['run_id'],latest['attempt']))
+        data=(info,rendered)
         publisher.publish(data,source_key)
         payload.pop('diagnostic',None)
     except Exception as error:

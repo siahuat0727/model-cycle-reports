@@ -38,11 +38,12 @@ def download(url, token):
 def decode(content):
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
         output = []
-        for name in ('results.json', 'manifest.json'):
+        for name in ('results.json', 'manifest.json', 'report.html'):
             matches = [item for item in archive.infolist() if item.filename == name]
             if len(matches) != 1 or matches[0].file_size > 4 * 1024 * 1024:
                 raise RuntimeError('Unexpected artifact structure')
-            output.append(json.loads(archive.read(matches[0])))
+            raw=archive.read(matches[0]).decode('utf-8')
+            output.append(raw if name.endswith('.html') else json.loads(raw))
         return tuple(output)
 
 
@@ -60,7 +61,7 @@ def latest():
             continue
         artifacts = request('GET', base+'/actions/runs/'+str(run['id'])+'/artifacts?per_page=100', token)
         matches = [a for a in artifacts['artifacts']
-                   if a['name'] == 'qwen35-08b-cycles' and not a['expired']]
+                   if a['name'] == 'model-cycles' and not a['expired']]
         if len(matches) == 1:
             return {'run_id': run['id'], 'attempt': run['run_attempt'],
                     'artifact_id': matches[0]['id'], 'commit': run['head_sha'],
