@@ -5,7 +5,7 @@ const rank = z.object({rank: cycles, sample_cycles: z.array(cycles), step_count:
   module_cycles: z.record(z.string(), cycles), mean_step_cycles: z.number().nonnegative()});
 export const sceneSchema = z.object({scene_id: z.string(), model_id: z.string(), model: z.string(),
   parameters: z.object({batch: z.number(), context: z.number(), dtype: z.string(), tp: z.number(), ep: z.number(),
-    quantization: z.string(), fixture: z.string(), seed: z.number(), decode_steps: z.number(), geometry: z.record(z.string(), z.number()), token: cycles, precision: z.record(z.string(), z.union([z.number(), z.boolean()]))}),
+    quantization: z.string(), fixture: z.string(), seed: z.number(), decode_steps: z.number(), geometry: z.record(z.string(), z.number()), layers: z.array(z.string()), token: cycles, precision: z.record(z.string(), z.union([z.number(), z.boolean()]))}),
   protocol: z.string(), comparison_key: z.string(), frequency_mhz: z.number().positive(),
   status: z.enum(["passed", "failed", "dependency_unavailable"]),
   reason: z.string().nullable().optional(), environment: z.record(z.string(), z.string().nullable()),

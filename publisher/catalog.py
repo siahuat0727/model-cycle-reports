@@ -45,11 +45,13 @@ def validate_scene(raw):
     status=raw['status']
     if status not in ('passed','failed','dependency_unavailable'):raise ValueError('Invalid scene status')
     params=raw['parameters']
-    expected=('batch','context','dtype','tp','ep','quantization','fixture','seed','decode_steps','geometry','token','precision')
+    expected=('batch','context','dtype','tp','ep','quantization','fixture','seed','decode_steps','geometry','token','precision','layers')
     clean={k:params[k] for k in expected}
     for key in ('batch','context','tp','ep','decode_steps'):
         if type(clean[key]) is not int or not 0<clean[key]<2**31:raise ValueError('Invalid scene dimension')
     if type(clean['seed']) is not int or not 0<=clean['seed']<2**53:raise ValueError('Invalid seed')
+    if not isinstance(clean['layers'],list) or not 0<len(clean['layers'])<=256:raise ValueError('Invalid layer structure')
+    clean['layers']=[identifier(kind) for kind in clean['layers']]
     clean['token']=cycles(clean['token'])
     if set(clean['precision'])-{'cuda_route_rounding','gdn_conv_tlayout','gdn_silu_mode'}:raise ValueError('Unknown precision setting')
     for key,value in clean['precision'].items():
@@ -109,7 +111,8 @@ def append(catalog, run):
     for scene in run['scenes']:
         if scene['status']!='passed':continue
         match=None
-        for old in sorted(previous,key=lambda r:r['created_at'],reverse=True):
+        earlier=[entry for entry in previous if (entry['created_at'],entry['report_id']) < (run['created_at'],run['report_id'])]
+        for old in sorted(earlier,key=lambda r:(r['created_at'],r['report_id']),reverse=True):
             match=next((s for s in old['scenes'] if s['scene_id']==scene['scene_id'] and s['status']=='passed'),None)
             if match:break
         scene['fingerprint']=fingerprint(scene)

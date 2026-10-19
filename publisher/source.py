@@ -94,7 +94,7 @@ def bundle(content):
         # Migration reads upstream aggregate values. Never reconstruct from logs
         # or infer a fake earlier timestamp from the new run.
         params={k:cfg[k] for k in ('batch','context','dtype','tp','seed','decode_steps','geometry')}
-        params.update(token=cfg['token'],precision=cfg.get('precision',{}),ep=cfg.get('ep',1),quantization=cfg.get('quantization','none'),
+        params.update(layers=cfg['layers'],token=cfg['token'],precision=cfg.get('precision',{}),ep=cfg.get('ep',1),quantization=cfg.get('quantization','none'),
                       fixture=cfg.get('framework',{}).get('fixture','synthetic'))
         model_id=cfg.get('model_id')
         if model_id is None:

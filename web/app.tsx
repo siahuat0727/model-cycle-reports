@@ -94,7 +94,7 @@ export default function App() {
     <main className="workspace">{message?<Empty>{message}</Empty>:!modelName?<>
       <div className="eyebrow">PERFORMANCE OBSERVATORY</div><h1>从模型，看到每一次进步。</h1><p className="intro">选择模型，查看场景详情、开发历程与模块构成。</p>
       <div className="model-grid">{models.map(([id,name])=>{const ss=[...new Map(runs.flatMap(r=>r.scenes.filter(s=>s.model_id===id)).map(s=>[s.scene_id,s])).values()];return <button className="model-card" key={id} onClick={()=>openModel(id)}>
-        <span className="model-mark">{id.includes("35b")?"35":"0.8"}<small>B</small></span><h2>{name}</h2><p>{ss.length} 个场景 · {ss[0]?.parameters.dtype} · TP{ss[0]?.parameters.tp}</p>
+        <span className="model-mark">{name.match(/(?:^|-)(\d+(?:\.\d+)?)B/)?.[1]??"M"}<small>{name.match(/(?:^|-)(\d+(?:\.\d+)?)B/)?"B":""}</small></span><h2>{name}</h2><p>{ss.length} 个场景 · {ss[0]?.parameters.dtype} · TP{ss[0]?.parameters.tp}</p>
         <div className="card-bottom"><span>{ss.filter(s=>s.status==="passed").length} 个场景已有测量</span><span>查看模型 ↗</span></div></button>;})}</div>
     </>:<>
       <nav className="breadcrumb"><button onClick={()=>setQuery({})}>全部模型</button><span>/</span><select aria-label="模型" value={model} onChange={e=>openModel(e.target.value)}>{models.map(([id,name])=><option key={id} value={id}>{name}</option>)}</select></nav>
@@ -105,7 +105,7 @@ export default function App() {
         <label>统计 rank<select value={rank} onChange={e=>navigate({rank:e.target.value})}>{Array.from({length:maxRank},(_,r)=><option key={r} value={r}>Rank {r}</option>)}</select></label>
         <span className="filter-note">合成输入 · 不含 prefill · 非设备 E2E latency</span></div>
       {tab==="trend"&&scene&&<>
-        <section className="panel"><div className="panel-heading"><div><h2>常规 decode 耗时</h2><p>{label(scene)} · Rank {rank}</p></div><Delta items={items} rank={rank}/></div>
+        <section className="panel"><div className="panel-heading"><div><h2>常规 decode 耗时</h2><p>{label(scene)} · Rank {rank}</p></div><Delta items={selected?items.slice(0,items.indexOf(selected)+1):items} rank={rank}/></div>
           <TrendChart items={items} rank={rank} selected={selected?.run.report_id??""} onSelect={id=>navigate({run:id})}/>
           <p className="chart-note">实心点可选择；空心点表示结果复用。虚线表示工具链或测量条件变化；失败记录不连线。</p></section>
       </>}

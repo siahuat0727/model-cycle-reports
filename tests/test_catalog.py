@@ -10,7 +10,7 @@ from publisher import catalog, report, source
 
 
 def scene():
-    parameters=dict(batch=1,context=18,dtype='bfloat16',tp=1,ep=1,quantization='none',fixture='synthetic',seed=42,decode_steps=3,geometry={'hidden':1024},token=271,precision={})
+    parameters=dict(batch=1,context=18,dtype='bfloat16',tp=1,ep=1,quantization='none',fixture='synthetic',seed=42,decode_steps=3,geometry={'hidden':1024},token=271,precision={},layers=['GDN','GQA'])
     compare=dict(model_id='qwen35-08b',parameters=parameters,protocol=catalog.PROTOCOL,frequency_mhz=400)
     return dict(scene_id='short',model_id='qwen35-08b',model='Qwen3.5-0.8B',parameters=parameters,protocol=catalog.PROTOCOL,
         frequency_mhz=400,comparison_key=catalog.digest(compare),status='passed',environment={'triton':'3.6.0','simulator_sha256':'a'*64},
@@ -30,6 +30,17 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(entries[-1]['scenes'][0]['same_as'],'a'*16)
         self.assertEqual(entries[-1]['scenes'][0]['details'],entries[0]['scenes'][0]['details'])
         self.assertEqual(catalog.append(entries,run('b'))[0],entries)
+
+    def test_backfill_does_not_reuse_a_future_observation(self):
+        first=run('a');first['created_at']='2026-10-19T01:00:00Z'
+        later=run('c');later['created_at']='2026-10-19T03:00:00Z'
+        entries,_=catalog.append([],first)
+        entries,_=catalog.append(entries,later)
+        middle=run('b');middle['created_at']='2026-10-19T02:00:00Z'
+        # The numerical state before B differs; C must not become B's previous.
+        entries[0]['scenes'][0]['ranks'][0].update(sample_cycles=[200,202],module_cycles={'GDN':400,'辅助':2},mean_step_cycles=201)
+        _,writes=catalog.append(entries,middle)
+        self.assertEqual(len(writes),1)
 
     def test_rounding_is_not_used_for_equality_and_toolchain_change_is_not_hidden(self):
         entries,_=catalog.append([],run('a'))
