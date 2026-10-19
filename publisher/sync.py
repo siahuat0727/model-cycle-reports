@@ -4,10 +4,11 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 import time
-from publisher import report, source, state
+from publisher import report, source, state, catalog
 
 
 def run(args, cwd=None, timeout=300):
@@ -46,6 +47,7 @@ class Publisher:
             if status == 'finished':
                 if release.get('commit_id') != pending['commit']:
                     raise RuntimeError('Published commit differs from requested commit')
+                self.payload['published_sources'] = list(dict.fromkeys([*self.payload.get('published_sources', []), *pending.get('sources', [])]))
                 self.payload.update(last_source=pending['source'],
                                     published_commit=pending['commit'],
                                     online_url=release.get('online_url'),
@@ -75,7 +77,7 @@ class Publisher:
             self.complete()
 
     def publish(self, data, source_key):
-        info, rendered = data
+        sources = [item['source_key'] for item in data]
         metadata=self.api('+git-credential-init')
         with tempfile.TemporaryDirectory(prefix='cycle-publisher-') as directory:
             repo=Path(directory)/'app'
@@ -84,15 +86,22 @@ class Publisher:
             destination=repo/'public/reports'
             destination.mkdir(parents=True,exist_ok=True)
             entries=[]
-            if (destination/'index.json').exists():
-                entries=json.loads((destination/'index.json').read_text())
-                for item in entries:
-                    if not re.fullmatch('[a-f0-9]{16}',item['report_id']):
-                        raise RuntimeError('Invalid report index')
-            report.write_report(rendered,info,destination/'runs'/info['report_id'])
-            entries=[e for e in entries if e['report_id']!=info['report_id']]
-            entries.append(info)
-            report.write_index(destination,entries)
+            index=destination/'catalog.json'
+            if index.exists():
+                entries=json.loads(index.read_text())['runs']
+            for item in data:
+                entries,writes=catalog.append(entries,item['run'])
+                for scene in writes:
+                    documents=report.rank_documents(item['reports'][scene['scene_id']],
+                                                    [r['rank'] for r in scene['ranks']])
+                    for rank,rendered in documents.items():
+                        target=destination/scene['details'][rank]
+                        target.parent.mkdir(parents=True,exist_ok=True)
+                        target.write_text(report.sanitize(rendered,item['run']),encoding='utf-8')
+            report.write_catalog(destination,entries)
+            # The public repository owns the dashboard source; the Miaoda repo
+            # supplies its platform scaffold and dependencies.
+            shutil.copytree(Path(__file__).resolve().parents[1]/'web',repo/'src',dirs_exist_ok=True)
             files={p.relative_to(destination).as_posix():hashlib.sha256(p.read_bytes()).hexdigest()
                    for p in destination.rglob('*') if p.is_file()}
             run(['npm','ci','--registry=https://registry.npmjs.org','--no-audit','--no-fund'],cwd=repo,timeout=900)
@@ -103,13 +112,13 @@ class Publisher:
                     raise RuntimeError('Build did not preserve report assets')
             run(['git','config','user.name',metadata['commit_author_name']],cwd=repo)
             run(['git','config','user.email',metadata['commit_author_email']],cwd=repo)
-            run(['git','add','--','public/reports'],cwd=repo)
+            run(['git','add','--','public/reports','src'],cwd=repo)
             changed=run(['git','diff','--cached','--name-only'],cwd=repo).strip()
             if changed:
                 run(['git','commit','-m','Publish measured cycles'],cwd=repo)
                 run(['git','push','origin','HEAD:sprint/default'],cwd=repo)
             commit=run(['git','rev-parse','HEAD'],cwd=repo).strip()
-        self.payload['unconfirmed']={'source':source_key,'commit':commit,
+        self.payload['unconfirmed']={'source':source_key,'sources':sources,'commit':commit,
                                     'files':files,'started_ms':int(time.time()*1000)}
         self.persist()
         release=self.api('+release-create','--branch','sprint/default')
@@ -125,21 +134,26 @@ def main():
     publisher=Publisher(payload,sha)
     try:
         publisher.resume()
-        latest=source.latest()
-        if latest is None:
-            print('No successful measurement artifact is available')
+        candidates=source.available()
+        seen=set(payload.get('published_sources',[]))
+        data=[]
+        for latest in candidates:
+            source_key=[latest[k] for k in ['run_id','attempt','artifact_id']]
+            key=':'.join(map(str,source_key))
+            if key in seen:continue
+            document,reports=source.bundle(source.download(latest['url'],os.environ['SOURCE_ACTIONS_TOKEN']))
+            execution=document['run']
+            if execution.get('run_id') is not None and str(execution['run_id'])!=str(latest['run_id']):
+                raise RuntimeError('Artifact run identity does not match CI')
+            if execution.get('attempt') is not None and str(execution['attempt'])!=str(latest['attempt']):
+                raise RuntimeError('Artifact attempt does not match completed run')
+            info=report.metadata(dict(commit=latest['commit'],created_at=execution['created_at']),
+                                 state.public_id(latest['run_id'],latest['attempt']))
+            item=catalog.validate(document,info)
+            data.append(dict(run=item,reports=reports,source_key=key))
+        if not data:
+            print('No unpublished completed measurement artifacts')
             return
-        source_key=[latest[k] for k in ['run_id','attempt','artifact_id']]
-        if payload.get('last_source')==source_key:
-            print('Latest successful measurement is already published')
-            return
-        raw,manifest,rendered=source.decode(source.download(latest['url'],os.environ['SOURCE_ACTIONS_TOKEN']))
-        if manifest.get('commit')!=latest['commit']:
-            raise RuntimeError('Artifact source version does not match CI run')
-        if raw.get('framework',{}).get('status')!='measured' or not raw.get('regular_decode'):
-            raise RuntimeError('Full framework measurements are required')
-        info=report.metadata(manifest,state.public_id(latest['run_id'],latest['attempt']))
-        data=(info,rendered)
         publisher.publish(data,source_key)
         payload.pop('diagnostic',None)
     except Exception as error:

@@ -8,7 +8,7 @@ import urllib.request
 import zipfile
 from publisher.state import request
 
-LIMIT = 32 * 1024 * 1024
+LIMIT = 128 * 1024 * 1024
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -67,3 +67,79 @@ def latest():
                     'artifact_id': matches[0]['id'], 'commit': run['head_sha'],
                     'url': matches[0]['archive_download_url']}
     return None
+
+
+def bundle(content):
+    """Read bounded named members without extracting or executing archive files."""
+    from publisher import catalog
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        names=[f.filename for f in archive.infolist()]
+        if len(names)!=len(set(names)):raise RuntimeError('Duplicate artifact member')
+        def read(name, limit=8*1024*1024):
+            info=archive.getinfo(name)
+            if info.file_size>limit:raise RuntimeError('Artifact member exceeds limit')
+            return archive.read(info).decode('utf-8')
+        if 'measurement-summary.json' in names:
+            summary=json.loads(read('measurement-summary.json'))
+            reports={}
+            for scene in summary['scenes']:
+                ident=catalog.identifier(scene['scene_id'])
+                if scene['status']=='passed':reports[ident]=read(ident+'/report.html')
+            return summary,reports
+        raw,manifest,rendered=decode(content)
+        cfg=manifest['scene'];fw=raw.get('framework') or {}
+        if fw.get('status')!='measured' or fw.get('errors') or not raw.get('regular_decode'):
+            raise ValueError('Legacy artifact is not a complete measurement')
+        # Migration reads upstream aggregate values. Never reconstruct from logs
+        # or infer a fake earlier timestamp from the new run.
+        params={k:cfg[k] for k in ('batch','context','dtype','tp','seed','decode_steps','geometry')}
+        params.update(ep=cfg.get('ep',1),quantization=cfg.get('quantization','none'),
+                      fixture=cfg.get('framework',{}).get('fixture','synthetic'))
+        model_id=cfg.get('model_id')
+        if model_id is None:
+            if cfg['adapter']!='qwen35' or cfg['model']!='Qwen3.5-0.8B':
+                raise ValueError('Legacy model has no stable identity')
+            model_id='qwen35-08b'
+        protocol=catalog.PROTOCOL if fw.get('manifest',{}).get('coverage_version')==1 else 'legacy-regular-decode-v0'
+        comparison=dict(model_id=model_id,parameters=params,protocol=protocol,frequency_mhz=cfg['frequency_mhz'])
+        fm=fw.get('manifest',{});view=raw['regular_decode']
+        env={k:manifest.get(k) for k in ('torch','triton','simulator_sha256','native_extension_sha256','sgl_adapter_sha256')}
+        env.update({k+'_commit':fm.get(k,{}).get('commit') for k in ('sglang','devexample')})
+        scene=dict(scene_id=cfg['id'],model_id=model_id,model=cfg['model'],parameters=params,
+            protocol=protocol,comparison_key=catalog.digest(comparison),frequency_mhz=cfg['frequency_mhz'],
+            status='passed',environment=env,probe_baseline_cycles=raw.get('weighted_total_cycles'),probe_rank=0,
+            ranks=[dict(rank=0,step_count=view['step_count'],sample_cycles=view['sample_cycles'],
+                        module_cycles=view['modules'],mean_step_cycles=view['mean_step_cycles'])])
+        return dict(schema_version=1,suite_id='legacy-single-scene',run=dict(commit=manifest['commit'],
+                    created_at=manifest['created_at']),scenes=[scene]),{scene['scene_id']:rendered}
+
+
+def available():
+    """Oldest first; include partial failures, paginate past more than one poll."""
+    repo,branch,token=(os.environ[k] for k in ('SOURCE_REPOSITORY','SOURCE_BRANCH','SOURCE_ACTIONS_TOKEN'))
+    base='https://api.github.com/repos/'+repo
+    runs=[]
+    for page in range(1,11):
+        query=urllib.parse.urlencode(dict(branch=branch,status='completed',per_page=100,page=page))
+        result=request('GET',base+'/actions/runs?'+query,token)
+        if result is None:raise RuntimeError('Source repository unavailable')
+        batch=result['workflow_runs'];runs.extend(batch)
+        if len(batch)<100:break
+    else:
+        raise RuntimeError('History exceeds discovery window; backfill before continuing')
+    found=[]
+    for run in runs:
+        if run.get('event')!='workflow_dispatch' or run.get('conclusion') not in ('success','failure','timed_out'):continue
+        result=request('GET',base+'/actions/runs/'+str(run['id'])+'/artifacts?per_page=100',token)
+        if result is None:raise RuntimeError('Cannot read source artifacts')
+        matches=[a for a in result['artifacts'] if a['name']=='model-cycles' and not a['expired']]
+        if len(matches)>1:raise RuntimeError('Ambiguous source artifacts')
+        if matches:
+            artifact=matches[0]
+            if artifact.get('created_at') and run.get('run_started_at') and artifact['created_at'] < run['run_started_at']:
+                continue  # This artifact belongs to an earlier attempt.
+            # A rerun's old artifact can outlive the rerun; bind to the artifact
+            # creation time and workflow_run head, not an unverified latest attempt.
+            found.append(dict(run_id=run['id'],attempt=run['run_attempt'],artifact_id=artifact['id'],
+                commit=run['head_sha'],url=artifact['archive_download_url'],created_at=run['created_at']))
+    return sorted(found,key=lambda r:(r['created_at'],r['run_id'],r['attempt']))

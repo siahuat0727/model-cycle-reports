@@ -99,3 +99,25 @@ def write_index(root, entries):
     body='<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>模型性能观测</title><style>body{font:15px/1.6 system-ui;padding:24px}td,th{padding:10px;border-bottom:1px solid #ddd;text-align:left}a{color:#3156bc}</style><h1>模型性能观测</h1><table><tr><th>采集时间（UTC）</th><th>版本</th><th>报告</th></tr>'+rows+'</table></html>'
     (root/'index.html').write_text(body,encoding='utf-8')
     (root/'index.json').write_text(json.dumps(ordered,ensure_ascii=False,indent=2)+'\n')
+
+
+def rank_documents(source, ranks):
+    """Unwrap CI rank srcdoc; sanitize each document separately at publication."""
+    root=document.document_fromstring(source)
+    frames=root.xpath('//section[@data-rank]/iframe[@srcdoc]')
+    if not frames:
+        if ranks!=[0]:raise ValueError('Missing rank detail pages')
+        return {'0':source}
+    result={}
+    for frame in frames:
+        rank=frame.getparent().get('data-rank')
+        if rank in result:raise ValueError('Duplicate rank detail')
+        result[rank]=frame.get('srcdoc')
+    if set(result)!={str(r) for r in ranks}:raise ValueError('Rank detail mismatch')
+    return result
+
+
+def write_catalog(root, entries):
+    """Public index contains only the validator's explicit projection."""
+    root.mkdir(parents=True,exist_ok=True)
+    (root/'catalog.json').write_text(json.dumps(dict(schema_version=1,runs=entries),ensure_ascii=False,indent=2,allow_nan=False)+'\n')
