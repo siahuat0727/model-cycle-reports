@@ -1,4 +1,5 @@
 """Sync successful measurements to an independently authenticated Miaoda app."""
+import copy
 import hashlib
 import json
 import os
@@ -17,10 +18,31 @@ class ExternalOperationError(RuntimeError):
         self.private_detail = private_detail
 
 
+class AuthorizationRequiredError(ExternalOperationError):
+    pass
+
+
+def authorization_required(error):
+    try:
+        result = json.loads(error.private_detail)
+    except (ValueError, TypeError):
+        result = {}
+    if isinstance(result, dict) and result.get('ok') is False and result.get('missing'):
+        return True  # `auth check --json` reports missing permissions this way.
+    return bool(re.search(
+        r'\b(token_missing|no_token|not_logged_in|missing_scopes|scope_missing|'
+        r'insufficient_scope|refresh_token_expired|refresh_token_invalid|invalid_grant)\b',
+        error.private_detail, re.IGNORECASE))
+
+
 def run(args, cwd=None, timeout=300):
     env = {k:v for k,v in os.environ.items() if k not in {
         'GH_TOKEN','GITHUB_TOKEN','SOURCE_ACTIONS_TOKEN','STATE_KEY',
         'SOURCE_REPOSITORY','SOURCE_BRANCH'}}
+    if os.environ.get('PUBLISHER_HOME'):
+        home = state.credential_home()
+        env.update(HOME=str(home), XDG_DATA_HOME=str(home/'.local/share'),
+                   XDG_CONFIG_HOME=str(home/'.config'))
     try:
         result = subprocess.run(args, cwd=cwd, env=env, capture_output=True,
                                 text=True, timeout=timeout)
@@ -50,16 +72,43 @@ class Publisher:
     def __init__(self, payload, sha):
         self.payload, self.sha = payload, sha
         self.app = payload['app_id']
+        self._saved_payload = copy.deepcopy(payload)
 
     def persist(self):
         self.payload['credentials'] = state.capture_credentials()
-        self.sha = state.save(self.payload, self.sha)
+        if self.payload != self._saved_payload:
+            self.sha = state.save(self.payload, self.sha)
+            self._saved_payload = copy.deepcopy(self.payload)
+
+    def command(self, args, **kwargs):
+        try:
+            return run(args, **kwargs)
+        except ExternalOperationError as error:
+            if authorization_required(error):
+                raise AuthorizationRequiredError(
+                    'Publisher authorization requires renewal', error.private_detail) from None
+            raise
+        finally:
+            # A request can refresh OAuth before failing or returning malformed JSON.
+            # Checkpoint before any subsequent network/build operation uses the token.
+            self.persist()
+
+    def check_authorization(self):
+        self.api('+get')  # A real user API call triggers the CLI's automatic refresh.
+        self.command(['lark-cli', 'auth', 'check', '--scope',
+                      'offline_access spark:app:read spark:app:write', '--json'])
+        print('Publisher authorization check passed', flush=True)
 
     def api(self, command, *args):
-        result = json.loads(run(['lark-cli','apps',command,'--app-id',self.app,
+        result = json.loads(self.command(['lark-cli','apps',command,'--app-id',self.app,
                                  '--as','user',*args], timeout=100))
         if not result.get('ok'):
-            raise RuntimeError('Miaoda API operation failed: '+command)
+            error = ExternalOperationError('Miaoda API operation failed: '+command,
+                                           json.dumps(result))
+            if authorization_required(error):
+                raise AuthorizationRequiredError(
+                    'Publisher authorization requires renewal', error.private_detail) from None
+            raise error
         return result['data']
 
     def complete(self):
@@ -107,7 +156,7 @@ class Publisher:
         metadata=self.api('+git-credential-init')
         with tempfile.TemporaryDirectory(prefix='cycle-publisher-') as directory:
             repo=Path(directory)/'app'
-            run(['git','clone','--depth','1','--branch','sprint/default',
+            self.command(['git','clone','--depth','1','--branch','sprint/default',
                  metadata['repository_url'],str(repo)])
             destination=repo/'public/reports'
             destination.mkdir(parents=True,exist_ok=True)
@@ -138,20 +187,20 @@ class Publisher:
                 shutil.copy2(file,target)
             files={p.relative_to(destination).as_posix():hashlib.sha256(p.read_bytes()).hexdigest()
                    for p in destination.rglob('*') if p.is_file()}
-            run(['npm','ci','--registry=https://registry.npmjs.org','--no-audit','--no-fund'],cwd=repo,timeout=900)
-            run(['npm','run','build'],cwd=repo,timeout=900)
+            self.command(['npm','ci','--registry=https://registry.npmjs.org','--no-audit','--no-fund'],cwd=repo,timeout=900)
+            self.command(['npm','run','build'],cwd=repo,timeout=900)
             for name,digest in files.items():
                 built=repo/'dist/output/reports'/name
                 if not built.is_file() or hashlib.sha256(built.read_bytes()).hexdigest()!=digest:
                     raise RuntimeError('Build did not preserve report assets')
-            run(['git','config','user.name',metadata['commit_author_name']],cwd=repo)
-            run(['git','config','user.email',metadata['commit_author_email']],cwd=repo)
-            run(['git','add','--','public/reports','src'],cwd=repo)
-            changed=run(['git','diff','--cached','--name-only'],cwd=repo).strip()
+            self.command(['git','config','user.name',metadata['commit_author_name']],cwd=repo)
+            self.command(['git','config','user.email',metadata['commit_author_email']],cwd=repo)
+            self.command(['git','add','--','public/reports','src'],cwd=repo)
+            changed=self.command(['git','diff','--cached','--name-only'],cwd=repo).strip()
             if changed:
-                run(['git','commit','-m','Publish measured cycles'],cwd=repo)
-                run(['git','push','origin','HEAD:sprint/default'],cwd=repo)
-            commit=run(['git','rev-parse','HEAD'],cwd=repo).strip()
+                self.command(['git','commit','-m','Publish measured cycles'],cwd=repo)
+                self.command(['git','push','origin','HEAD:sprint/default'],cwd=repo)
+            commit=self.command(['git','rev-parse','HEAD'],cwd=repo).strip()
         self.payload['unconfirmed']={'source':source_key,'sources':sources,'commit':commit,
                                     'dashboard_revision':dashboard_revision(),
                                     'files':files,'started_ms':int(time.time()*1000)}
@@ -202,10 +251,15 @@ def collect(candidates, payload):
 
 
 def main():
+    if not os.environ.get('PUBLISHER_HOME'):
+        raise RuntimeError('PUBLISHER_HOME must name an isolated credential directory')
+    state.credential_home()  # Validate before restoring any credential files.
     payload,sha=state.load()
     state.restore_credentials(payload['credentials'])
     publisher=Publisher(payload,sha)
     try:
+        publisher.check_authorization()
+        payload.pop('diagnostic', None)
         publisher.resume()
         data,transport_errors=collect(source.available(),payload)
         if not data:
@@ -232,5 +286,8 @@ if __name__=='__main__':
         main()
     except Exception as error:
         # CLI and network exceptions can contain private URLs or credential paths.
-        print('Publisher failed ('+type(error).__name__+'). Inspect protected state privately.')
+        if isinstance(error, AuthorizationRequiredError):
+            print('::error::Publisher authorization requires renewal. Update the dedicated CI authorization; automatic retries cannot grant missing consent.')
+        else:
+            print('Publisher failed ('+type(error).__name__+'). Inspect protected state privately.')
         raise SystemExit(1)

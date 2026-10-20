@@ -24,6 +24,13 @@
 
 新网站文件在本地构建及检查后，由 `publisher.sync` 原有发布状态机确认部署 commit；未完成的 release 下轮继续核对。
 
+每次轮询（包括没有新报告时）先调用妙搭只读接口，让 CLI 按需刷新用户 token，再检查 `offline_access`、`spark:app:read` 和 `spark:app:write`。无需定期复制本机凭据。CLI、Git credential helper 等子进程结束后立即检查并加密保存凭据变化；失败也执行 checkpoint，未变化的状态不新增 commit。瞬时故障由下轮重试，缺少授权/权限会明确报错，不会自动发起交互式登录。
+
+CI 通过 `PUBLISHER_HOME` 指定独立临时目录，并在结束时清理；CLI 与 Git 使用该目录，不能设为日常用户 HOME。手动运行 `python -m publisher.sync` 也必须显式设置一个独立绝对路径。日常 CLI 不应恢复或刷新同一份 CI 授权快照；本仓库的 workflow concurrency 保证发布任务是状态的单一写入者。
+
+用户授权被撤销、refresh token 过期或平台要求重新授权时，仍需重新授权后更新加密状态。自动续期负责正常 token 到期，不能补授缺失权限。初始化授权应包含上述三个 scope；刷新返回的新 refresh token 以 CLI 保存结果为准。
+
+
 ## 验证
 
 ```sh

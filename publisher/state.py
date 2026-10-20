@@ -75,8 +75,17 @@ def save(payload, sha):
     return result['content']['sha']
 
 
+def credential_home():
+    directory = os.environ.get('PUBLISHER_HOME')
+    if directory and not Path(directory).is_absolute():
+        raise RuntimeError('Publisher credential directory must be absolute')
+    if directory and Path(directory).resolve() == Path.home().resolve():
+        raise RuntimeError('Publisher credential directory must differ from the personal home')
+    return Path(directory) if directory else Path.home()
+
+
 def capture_credentials():
-    home = Path.home()
+    home = credential_home()
     config = home/'.lark-cli/config.json'
     store = home/'.local/share/lark-cli'
     if not config.is_file() or not (store/'master.key').is_file():
@@ -89,7 +98,7 @@ def capture_credentials():
 
 
 def restore_credentials(files):
-    home = Path.home()
+    home = credential_home()
     config = home/'.lark-cli/config.json'
     store = home/'.local/share/lark-cli'
     config.parent.mkdir(mode=0o700, parents=True, exist_ok=True)

@@ -30,6 +30,10 @@ jobs:
         run: |
           python -m pip install -r requirements.txt
           npm install -g @larksuite/cli@1.0.96 --registry=https://registry.npmjs.org --no-audit --no-fund
+      - name: Prepare isolated credential directory
+        run: |
+          publisher_home="$(mktemp -d "$RUNNER_TEMP/cycle-publisher.XXXXXX")"
+          echo "PUBLISHER_HOME=$publisher_home" >> "$GITHUB_ENV"
       - name: Sync and publish new successful result
         env:
           GH_TOKEN: ${{ github.token }}
@@ -39,6 +43,6 @@ jobs:
           SOURCE_ACTIONS_TOKEN: ${{ secrets.SOURCE_ACTIONS_TOKEN }}
         run: python -m publisher.sync
       - name: Remove local credentials
-        if: always()
+        if: always() && env.PUBLISHER_HOME != ''
         run: |
-          rm -rf "$HOME/.lark-cli" "$HOME/.local/share/lark-cli"
+          rm -rf "$PUBLISHER_HOME"
