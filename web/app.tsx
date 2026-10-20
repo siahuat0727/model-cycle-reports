@@ -6,7 +6,11 @@ import type { Observation, Rank, Run, Scene } from "./lib/cycle-data";
 import "./cycles.css";
 
 type Tab = "detail" | "trend" | "compare";
-const tabs: {id: Tab; label: string}[] = [{id:"detail",label:"场景详情"},{id:"trend",label:"历史趋势"},{id:"compare",label:"场景对比"}];
+const tabs: {id: Tab; label: string; icon: string}[] = [
+  {id:"detail",label:"场景详情",icon:"M5 3.5h14v17H5z M8 8h8 M8 12h8 M8 16h5"},
+  {id:"trend",label:"历史趋势",icon:"M4 5v14h16 M7 13l4-5 4 3 5-7"},
+  {id:"compare",label:"场景对比",icon:"M5 10v9 M12 5v14 M19 8v11 M3 19h18"},
+];
 function Status({scene}:{scene:Scene}) {return <span className={`status ${scene.status}`}>{states[scene.status]}</span>;}
 function Empty({children}:{children:React.ReactNode}) {return <div className="empty">{children}</div>;}
 const displayTime=(value:number)=>value.toLocaleString("en-US",{minimumFractionDigits:3,maximumFractionDigits:3});
@@ -127,7 +131,7 @@ export default function App() {
     </>:<>
       <nav className="breadcrumb"><button onClick={()=>setQuery({})}>全部模型</button><span>/</span><select aria-label="模型" value={model} onChange={e=>openModel(e.target.value)}>{models.map(([id,name])=><option key={id} value={id}>{name}</option>)}</select></nav>
       <div className="model-heading"><div><h1>{modelName}</h1><p className="intro">{scenes[0]?.parameters.dtype} <span>·</span> TP{scenes[0]?.parameters.tp} <span>·</span> {scenes.length} 个场景 <span>·</span> {modelRuns.length} 次 CI 记录</p></div><div className="model-update"><span>最近采集</span><strong>{modelRuns.length?date(modelRuns.at(-1)!.created_at):"—"}</strong></div></div>
-      <nav className="tabs" aria-label="性能视图">{tabs.map(t=><button key={t.id} aria-current={tab===t.id?"page":undefined} onClick={()=>navigate({view:t.id,run:null})}>{t.label}</button>)}</nav>
+      <nav className="tabs" aria-label="性能视图">{tabs.map(t=><button key={t.id} aria-current={tab===t.id?"page":undefined} onClick={()=>navigate({view:t.id,run:null})}><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d={t.icon}/></svg><span>{t.label}</span></button>)}</nav>
       <div className="filters">{tab!=="compare"&&<label>场景<select value={scene?.scene_id??""} onChange={e=>navigate({scene:e.target.value,run:null})}>{scenes.map(s=><option key={s.scene_id} value={s.scene_id}>{label(s)}</option>)}</select></label>}
         {tab!=="trend"&&<label>CI 记录<select value={(tab==="compare"?selectedRun?.report_id:selected?.run.report_id)??""} onChange={e=>{setExcluded([]);navigate({run:e.target.value});}}>{[...(tab==="compare"?modelRuns:items.map(i=>i.run))].reverse().map(r=><option key={r.report_id} value={r.report_id}>{date(r.created_at)} · {r.commit.slice(0,8)}</option>)}</select></label>}
         <label>统计 rank<select aria-label="统计 rank" value={rank} onChange={e=>navigate({rank:e.target.value})}>{Array.from({length:maxRank},(_,r)=><option key={r} value={r}>Rank {r}</option>)}</select></label>
