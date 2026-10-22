@@ -151,7 +151,7 @@ class Publisher:
         if self.payload.get('pending'):
             self.complete()
 
-    def publish(self, data, source_key):
+    def publish(self, data, source_key, *, force=False):
         sources = [item['source_key'] for item in data]
         metadata=self.api('+git-credential-init')
         with tempfile.TemporaryDirectory(prefix='cycle-publisher-') as directory:
@@ -199,8 +199,20 @@ class Publisher:
             changed=self.command(['git','diff','--cached','--name-only'],cwd=repo).strip()
             if changed:
                 self.command(['git','commit','-m','Publish measured cycles'],cwd=repo)
+            elif force:
+                # A new commit asks the hosting service to build again rather
+                # than reuse the deployment associated with an existing SHA.
+                self.command(['git','commit','--allow-empty','-m','Rebuild site deployment'],cwd=repo)
+            if changed or force:
                 self.command(['git','push','origin','HEAD:sprint/default'],cwd=repo)
             commit=self.command(['git','rev-parse','HEAD'],cwd=repo).strip()
+        if not force and commit == self.payload.get('published_commit'):
+            self.payload['dashboard_revision'] = dashboard_revision()
+            self.payload['published_sources'] = list(dict.fromkeys([*self.payload.get('published_sources', []), *sources]))
+            self.payload['last_source'] = source_key
+            self.persist()
+            print('Published content unchanged; release skipped', flush=True)
+            return
         self.payload['unconfirmed']={'source':source_key,'sources':sources,'commit':commit,
                                     'dashboard_revision':dashboard_revision(),
                                     'files':files,'started_ms':int(time.time()*1000)}
@@ -262,15 +274,16 @@ def main():
         payload.pop('diagnostic', None)
         publisher.resume()
         data,transport_errors=collect(source.available(),payload)
+        force = os.environ.get('FORCE_SITE_REDEPLOY') == 'true'
         if not data:
             if transport_errors:raise RuntimeError('Artifact download failed; next poll will retry')
-            if payload.get('published_sources') and payload.get('dashboard_revision')!=dashboard_revision():
-                publisher.publish([],payload['last_source'])
+            if payload.get('published_sources') and (force or payload.get('dashboard_revision')!=dashboard_revision()):
+                publisher.publish([],payload['last_source'],force=force)
             else:
                 print('No unpublished measurements or dashboard changes')
             return
         source_key=data[-1]['source_key'].split(':')
-        publisher.publish(data,[int(value) for value in source_key])
+        publisher.publish(data,[int(value) for value in source_key],force=force)
         if transport_errors:raise RuntimeError('Some artifact downloads failed; next poll will retry')
         payload.pop('diagnostic',None)
     except Exception as error:

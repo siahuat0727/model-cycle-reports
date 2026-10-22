@@ -48,3 +48,41 @@ class DashboardRevisionTests(unittest.TestCase):
         publisher=Publisher(payload,'sha');publisher.api=Mock(return_value={'status':'finished','commit_id':'a'*40});publisher.persist=Mock()
         publisher.complete();self.assertEqual(payload['dashboard_revision'],'revision')
         self.assertEqual(payload['published_sources'],[])
+
+class RecoveryTests(unittest.TestCase):
+    def test_forced_redeploy_creates_fresh_commit_but_regular_noop_skips_release(self):
+        from pathlib import Path
+        import shutil
+        for force in (False,True):
+            with self.subTest(force=force):
+                calls=[]
+                def command(args,cwd=None,**kwargs):
+                    calls.append(args)
+                    if args[:2]==['git','clone']:
+                        (Path(args[-1])/'public/reports').mkdir(parents=True)
+                    elif args[:3]==['npm','run','build']:
+                        shutil.copytree(cwd/'public/reports',cwd/'dist/output/reports')
+                    elif args[:2]==['git','rev-parse']:
+                        return ('b' if force else 'a')*40
+                    return ''
+                payload=dict(app_id='test',published_commit='a'*40,published_sources=['old'],last_source=[1,1,2])
+                publisher=Publisher(payload,'sha')
+                publisher.command=Mock(side_effect=command)
+                publisher.api=Mock(side_effect=lambda cmd,*args:dict(repository_url='https://example.test/app',commit_author_name='test',commit_author_email='test@example.test') if cmd=='+git-credential-init' else {'release_id':'new-release'})
+                publisher.persist=Mock();publisher.complete=Mock()
+                with patch('publisher.sync.dashboard_files',return_value=[]),patch('publisher.publication.scene_ids',return_value={'short'}):
+                    publisher.publish([],[1,1,2],force=force)
+                commits=[c for c in calls if c[:2]==['git','commit']]
+                pushes=[c for c in calls if c[:2]==['git','push']]
+                if force:
+                    self.assertEqual(commits,[['git','commit','--allow-empty','-m','Rebuild site deployment']])
+                    self.assertEqual(len(pushes),1)
+                    self.assertEqual(payload['pending']['commit'],'b'*40)
+                    publisher.complete.assert_called_once()
+                    self.assertEqual(payload['published_commit'],'a'*40)
+                else:
+                    self.assertEqual(commits,[]);self.assertEqual(pushes,[])
+                    publisher.complete.assert_not_called()
+                    self.assertNotIn('pending',payload)
+                    self.assertIn('dashboard_revision',payload)
+                    self.assertEqual(payload['published_sources'],['old'])
