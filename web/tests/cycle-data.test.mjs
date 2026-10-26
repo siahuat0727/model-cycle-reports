@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {test} from 'node:test';
-import {sceneSchema, catalogSchema, toolchainEqual, ms} from '../lib/cycle-data.ts';
+import {sceneSchema, catalogSchema, toolchainEqual, ms, label} from '../lib/cycle-data.ts';
 const fixture=JSON.parse(readFileSync(new URL('../../tests/fixtures/measurement-summary.json',import.meta.url)));
 
 test('upstream-produced summary crosses the public frontend contract',()=>{
@@ -23,4 +23,20 @@ test('public detail links cannot escape the reports root',()=>{
 test('empty catalogs are valid and unsupported contracts are rejected',()=>{
   assert.equal(catalogSchema.safeParse({schema_version:1,runs:[]}).success,true);
   assert.equal(catalogSchema.safeParse({schema_version:2,runs:[]}).success,false);
+});
+
+
+test('shared eager CI keeps explicit conditions and labels distinct from legacy',()=>{
+  const raw=JSON.parse(readFileSync(new URL('../../tests/fixtures/shared-measurement-summary.json',import.meta.url)));
+  for(const item of raw.scenes){
+    const parsed=sceneSchema.parse(item);
+    assert.equal(parsed.parameters.execution_mode,'eager');
+    assert.equal(parsed.parameters.weight_storage,'shared_synthetic_v1');
+    assert.match(label(parsed),/eager.*共享合成权重/);
+  }
+  const legacy=sceneSchema.parse(fixture.scenes[0]);
+  assert.equal(legacy.parameters.execution_mode,undefined);
+  assert.doesNotMatch(label(legacy),/共享合成权重/);
+  const invalid=structuredClone(raw.scenes[1]);invalid.parameters.execution_mode='unknown';
+  assert.equal(sceneSchema.safeParse(invalid).success,false);
 });

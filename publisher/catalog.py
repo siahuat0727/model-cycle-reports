@@ -47,7 +47,15 @@ def validate_scene(raw):
     params=raw['parameters']
     expected=('batch','context','dtype','tp','ep','quantization','fixture','seed','decode_steps','geometry','token','precision','layers')
     clean={k:params[k] for k in expected}
+    for key, allowed in (('execution_mode', ('graph', 'eager')),
+                         ('weight_storage', ('independent', 'shared_synthetic_v1'))):
+        if key in params:
+            if params[key] not in allowed:raise ValueError('Invalid '+key)
+            clean[key]=params[key]
+    if clean.get('weight_storage')=='shared_synthetic_v1' and clean['fixture']!='synthetic':
+        raise ValueError('Shared weights require a synthetic fixture')
     for key in ('batch','context','tp','ep','decode_steps'):
+
         if type(clean[key]) is not int or not 0<clean[key]<2**31:raise ValueError('Invalid scene dimension')
     if type(clean['seed']) is not int or not 0<=clean['seed']<2**53:raise ValueError('Invalid seed')
     if not isinstance(clean['layers'],list) or not 0<len(clean['layers'])<=256:raise ValueError('Invalid layer structure')
