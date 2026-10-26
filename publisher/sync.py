@@ -231,7 +231,12 @@ def collect(candidates, payload):
     data,transport_errors=[],[]
     for latest in candidates:
         artifact=str(latest['artifact_id'])
-        if artifact in seen or artifact in rejected:continue
+        if artifact in seen:continue
+        rejection=rejected.get(artifact)
+        retry_comparison=(rejection is not None and rejection.get('type')=='ValueError'
+                          and rejection.get('reason')=='Comparison key mismatch'
+                          and not rejection.get('shared_contract_rechecked'))
+        if rejection is not None and not retry_comparison:continue
         try:
             content=source.download(latest['url'],os.environ['SOURCE_ACTIONS_TOKEN'])
         except Exception as exc:
@@ -256,8 +261,10 @@ def collect(candidates, payload):
                     for rendered in docs.values():report.sanitize(rendered,info)
             key=':'.join(map(str,[latest['run_id'],attempt,latest['artifact_id']]))
             data.append(dict(run=item,reports=reports,source_key=key))
+            rejected.pop(artifact,None)
         except Exception as exc:
-            rejected[artifact]=dict(type=type(exc).__name__,reason=str(exc)[-1000:])
+            rejected[artifact]=dict(type=type(exc).__name__,reason=str(exc)[-1000:],
+                                    shared_contract_rechecked=True)
             print('::warning::Invalid historical artifact isolated; diagnostic retained in encrypted publisher state')
     return data,transport_errors
 

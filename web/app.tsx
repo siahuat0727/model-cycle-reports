@@ -161,6 +161,7 @@ export default function App() {
         {selected.scene.status==="passed"&&<button className="text-button" onClick={()=>navigate({view:"detail",run:selected.run.report_id})}>{selected.scene.same_as?"查看复用的详情 ↗":"查看完整详情 ↗"}</button>}</div>}
       {tab==="detail"&&selected&&<>
         <div className="detail-intro"><Status scene={selected.scene}/><span>{date(selected.run.created_at)} · commit {selected.run.commit.slice(0,12)}</span><span>{label(selected.scene)}</span></div>
+        {selected.scene.parameters.weight_storage==="shared_synthetic_v1"&&<div className="notice">共享合成权重场景：完整层数执行，KV/GDN state 独立。地址复用可能影响 cycles，请与独立权重场景分开解读。</div>}
         {selected.scene.same_as&&<div className="notice">本次性能结果与已有记录相同，下面复用已有详情。当前 CI 的时间、版本和环境仍独立保留；详情内的采集来源对应原记录。</div>}
         {selectedRank?<>
           <div className="metrics"><div><span>常规 decode</span><strong>{format(ms(selectedRank.mean_step_cycles,selected.scene.frequency_mhz))}<small>ms/step</small></strong><p>{selectedRank.step_count} 个非结束 step · Rank {rank}</p></div>

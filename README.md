@@ -51,3 +51,11 @@ npm --prefix web test
 ```
 
 CI 会执行上述检查。测试 fixture 是已验证的旧短场景白名单摘要，用来约束历史迁移到网站的数据契约；浏览器交互和平台完整构建另外验证。
+
+
+新增 Qwen 共享合成权重场景保留独立 scene ID；公开清单同时保留旧独立权重场景。
+上游可选 `execution_mode`（graph/eager）和 `weight_storage`（independent/shared_synthetic_v1）
+参与 comparison key 校验并原样保留，不为旧历史补默认值。页面标明 eager 与共享合成权重，
+共享地址可能影响 cycles，不能直接解释为独立真实权重的耗时。
+旧校验器曾以 `Comparison key mismatch` 拒绝的 artifact 会自动重新完整验证一次；
+仍不合法的结果继续隔离，其他拒绝原因不重试。

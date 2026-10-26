@@ -110,3 +110,25 @@ class RetryTests(unittest.TestCase):
             data,errors=collect(candidates,payload)
         self.assertEqual(len(data),1);self.assertEqual(data[0]['source_key'],'2:1:2')
         self.assertIn('1',payload['rejected_sources']);self.assertEqual(errors,[])
+
+
+class SharedContractTests(unittest.TestCase):
+    def test_actual_partial_ci_retains_new_parameters_and_rank_cycles(self):
+        raw=json.loads((Path(__file__).parent/'fixtures/shared-measurement-summary.json').read_text())
+        result=catalog.validate(raw,dict(commit=raw['run']['commit']))
+        self.assertEqual([s['status'] for s in result['scenes']],['dependency_unavailable','passed'])
+        for original,clean in zip(raw['scenes'],result['scenes']):
+            self.assertEqual(clean['parameters'],original['parameters'])
+            self.assertEqual(clean['ranks'],original['ranks'])
+        old=scene()
+        self.assertNotIn('execution_mode',catalog.validate_scene(old)['parameters'])
+        self.assertNotIn('weight_storage',catalog.validate_scene(old)['parameters'])
+
+    def test_invalid_modes_and_changed_conditions_are_rejected(self):
+        for key,value in (('execution_mode','unknown'),('weight_storage','unknown')):
+            raw=scene();raw['parameters'][key]=value
+            with self.assertRaisesRegex(ValueError,'Invalid '+key):catalog.validate_scene(raw)
+        raw=scene();raw['parameters']['execution_mode']='eager'
+        with self.assertRaisesRegex(ValueError,'Comparison key mismatch'):catalog.validate_scene(raw)
+        raw=scene();raw['parameters'].update(weight_storage='shared_synthetic_v1',fixture='checkpoint')
+        with self.assertRaisesRegex(ValueError,'synthetic fixture'):catalog.validate_scene(raw)

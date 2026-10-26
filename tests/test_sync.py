@@ -86,3 +86,25 @@ class RecoveryTests(unittest.TestCase):
                     self.assertNotIn('pending',payload)
                     self.assertIn('dashboard_revision',payload)
                     self.assertEqual(payload['published_sources'],['old'])
+
+
+class SharedContractRetryTests(unittest.TestCase):
+    def test_old_comparison_rejection_is_rechecked_once_and_valid_result_is_recovered(self):
+        from publisher.sync import collect
+        from test_catalog import scene
+        from test_publisher import HTML
+        candidate=dict(run_id=2,attempt=1,artifact_id=20,commit='c'*40,url='https://example.test')
+        document=dict(schema_version=1,run=dict(commit='c'*40,created_at='2026-10-19T01:00:00Z'),scenes=[scene()])
+        payload=dict(rejected_sources={'20':dict(type='ValueError',reason='Comparison key mismatch')})
+        with patch.dict('os.environ',{'SOURCE_ACTIONS_TOKEN':'test'}),patch('publisher.sync.source.download',return_value=b'data') as download,patch('publisher.sync.source.bundle',return_value=(document,{'short':HTML})),patch('publisher.sync.state.public_id',return_value='b'*16):
+            data,errors=collect([candidate],payload)
+        self.assertEqual(len(data),1);self.assertEqual(errors,[])
+        self.assertNotIn('20',payload['rejected_sources']);download.assert_called_once()
+        payload=dict(rejected_sources={'20':dict(type='ValueError',reason='Comparison key mismatch')})
+        with patch.dict('os.environ',{'SOURCE_ACTIONS_TOKEN':'test'}),patch('publisher.sync.source.download',return_value=b'data') as download,patch('publisher.sync.source.bundle',side_effect=ValueError('Comparison key mismatch')):
+            self.assertEqual(collect([candidate],payload),([],[]))
+            self.assertEqual(collect([candidate],payload),([],[]))
+            download.assert_called_once()
+        payload=dict(rejected_sources={'20':dict(type='ValueError',reason='Unsafe public text')})
+        with patch('publisher.sync.source.download') as download:
+            self.assertEqual(collect([candidate],payload),([],[]));download.assert_not_called()
