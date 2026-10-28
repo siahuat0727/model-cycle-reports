@@ -26,11 +26,30 @@ export const color = (name: string) => COLORS[name] ?? "#929ba8";
 export const ms = (cycles: number, frequency: number) => cycles / frequency / 1000;
 export const format = (value: number) => value.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:4});
 export const date = (value: string) => new Date(value).toLocaleString("zh-CN",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hour12:false});
-export const label = (scene: Scene) => `B${scene.parameters.batch} · context ${scene.parameters.context.toLocaleString("en-US")} · TP${scene.parameters.tp}${scene.parameters.execution_mode ? ` · ${scene.parameters.execution_mode}` : ""}${scene.parameters.weight_storage === "shared_synthetic_v1" ? " · 共享合成权重" : ""}`;
+// Execution mode and storage describe an observation, not a scenario selector.
+export const sceneGroupId = (scene: Scene) => [scene.model_id, scene.parameters.batch,
+  scene.parameters.context, scene.parameters.tp, scene.parameters.ep, scene.parameters.dtype,
+  scene.parameters.quantization, scene.parameters.fixture].join(":");
+export const label = (scene: Scene) => `B${scene.parameters.batch} · context ${scene.parameters.context.toLocaleString("en-US")} · TP${scene.parameters.tp}`;
+export function groupedScenes(scenes: Scene[]): Scene[] {
+  // Keep the last observation (including failure); never fall back to an older success.
+  return [...new Map(scenes.map(scene => [sceneGroupId(scene), scene])).values()];
+}
+export function scenesForRun(run: Run, model: string): Scene[] {
+  return groupedScenes(run.scenes.filter(scene => scene.model_id === model));
+}
+export function conditionDescription(scene: Scene): string {
+  const p=scene.parameters;
+  return `${p.execution_mode ?? "历史记录未声明执行模式"} · ${p.weight_storage === "shared_synthetic_v1" ? "共享合成权重" : p.weight_storage === "independent" ? "独立权重" : "历史记录未声明权重存储方式"} · 实际 decode ${p.decode_steps} 步`;
+}
+
 export const states = {passed:"已测量",failed:"执行失败",dependency_unavailable:"依赖未就绪"};
 export function toolchainEqual(a: Scene,b: Scene) {
   return ["torch","triton","simulator_sha256","toolchain_fingerprint"].every(key => a.environment[key] === b.environment[key]);
 }
 export function observations(runs: Run[],model: string,scene: string): Observation[] {
-  return runs.flatMap(run=>run.scenes.filter(s=>s.model_id===model && s.scene_id===scene).map(s=>({run,scene:s})));
+  // Accept old scene-ID URLs as well as the presentation group key.
+  const match=runs.flatMap(run=>run.scenes).find(s=>s.model_id===model && s.scene_id===scene);
+  const key=match ? sceneGroupId(match) : scene;
+  return runs.flatMap(run=>scenesForRun(run,model).filter(s=>sceneGroupId(s)===key).map(s=>({run,scene:s})));
 }
