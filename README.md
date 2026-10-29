@@ -59,3 +59,16 @@ CI 会执行上述检查。测试 fixture 是已验证的旧短场景白名单�
 共享地址可能影响 cycles，不能直接解释为独立真实权重的耗时。
 旧校验器曾以 `Comparison key mismatch` 拒绝的 artifact 会自动重新完整验证一次；
 仍不合法的结果继续隔离，其他拒绝原因不重试。
+
+
+## 场景入口与采样次数
+
+网站按模型、B/context/TP、EP、dtype、quantization 和 fixture 分组，同 context 的
+旧 graph/独立权重与新 eager/共享权重记录进入同一历史。原始 scene ID、comparison key、
+测量值与详情路径不改写，旧 scene ID 链接继续可用。入口名称只显示 B/context/TP，
+执行模式和权重方式放在默认折叠的“测试条件”。同一 CI/分组存在多份结果时展示列表中的
+最后一份；原始 catalog 保留所有记录。最新失败不会自动回退到历史成功。
+
+首页三个模型各两个场景：0.8B 为 context18/85000，35B 与 27B 为 context6/85000。
+样本数按上游原始 step_count 展示；新 CI 实际执行两步，第一步为唯一常规样本，第二步
+结束请求。历史两样本均值保持原值。独立算子加权仅为参考，不展示它与整模的框架开销差额。
