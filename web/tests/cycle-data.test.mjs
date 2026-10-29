@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {test} from 'node:test';
-import {sceneSchema, catalogSchema, toolchainEqual, ms, label, sceneGroupId, groupedScenes, scenesForRun, observations, conditionDescription} from '../lib/cycle-data.ts';
+import {sceneSchema, catalogSchema, toolchainEqual, ms, label, sceneGroupId, groupedScenes, scenesForRun, observations, conditionDescription, latestSuccessfulScenes} from '../lib/cycle-data.ts';
 const fixture=JSON.parse(readFileSync(new URL('../../tests/fixtures/measurement-summary.json',import.meta.url)));
 
 test('upstream-produced summary crosses the public frontend contract',()=>{
@@ -74,4 +74,22 @@ test('configured historical IDs form exactly three model cards with two context 
   });
   const groups=groupedScenes(scenes);assert.equal(groups.length,6);
   for(const model of new Set(groups.map(s=>s.model_id)))assert.equal(groups.filter(s=>s.model_id===model).length,2);
+});
+
+
+test('overview retains last successful time without rewriting latest failed history',()=>{
+  const success=sceneSchema.parse(fixture.scenes[0]);
+  const failed=structuredClone(success);failed.status='failed';failed.ranks=[];
+  const pending=structuredClone(success);pending.status='dependency_unavailable';pending.ranks=[];
+  const long=structuredClone(success);long.parameters.context=85000;long.scene_id+='-long';long.status='failed';long.ranks=[];
+  const runs=[{report_id:'a',scenes:[success]},{report_id:'b',scenes:[failed,long]},{report_id:'c',scenes:[pending]}];
+  const snapshot=structuredClone(runs);
+  const cards=latestSuccessfulScenes(runs,success.model_id);
+  assert.equal(cards.get(sceneGroupId(success)).run.report_id,'a');
+  assert.equal(cards.has(sceneGroupId(long)),false);
+  assert.equal(latestSuccessfulScenes(runs,success.model_id,1).size,0);
+  assert.equal(observations(runs,success.model_id,success.scene_id).at(-1).scene.status,'dependency_unavailable');
+  const newer=structuredClone(success);newer.ranks[0].mean_step_cycles=50;
+  assert.equal(latestSuccessfulScenes([...runs,{report_id:'d',scenes:[newer]}],success.model_id).get(sceneGroupId(success)).scene.ranks[0].mean_step_cycles,50);
+  assert.deepEqual(runs,snapshot);
 });

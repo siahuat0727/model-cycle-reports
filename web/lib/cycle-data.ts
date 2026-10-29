@@ -53,3 +53,15 @@ export function observations(runs: Run[],model: string,scene: string): Observati
   const key=match ? sceneGroupId(match) : scene;
   return runs.flatMap(run=>scenesForRun(run,model).filter(s=>sceneGroupId(s)===key).map(s=>({run,scene:s})));
 }
+
+
+// Overview cards may show the last successful measurement while the latest
+// observation and the history retain their actual failure/pending status.
+export function latestSuccessfulScenes(runs: Run[], model: string, rank=0): Map<string, Observation> {
+  const result=new Map<string, Observation>();
+  for(const run of runs)for(const scene of scenesForRun(run,model)) {
+    if(scene.status==="passed"&&scene.ranks.some(value=>value.rank===rank))
+      result.set(sceneGroupId(scene),{run,scene});
+  }
+  return result;
+}

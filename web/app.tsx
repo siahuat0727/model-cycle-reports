@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useHref, useSearchParams } from "react-router-dom";
 import { reportBasePath } from "./lib/report-path";
-import { catalogSchema, color, date, format, label, ms, observations, states, toolchainEqual, sceneGroupId, groupedScenes, scenesForRun, conditionDescription } from "./lib/cycle-data";
+import { catalogSchema, color, date, format, label, ms, observations, states, latestSuccessfulScenes, sceneGroupId, groupedScenes, scenesForRun, conditionDescription } from "./lib/cycle-data";
 import type { Observation, Rank, Run, Scene } from "./lib/cycle-data";
 import "./cycles.css";
 
@@ -43,9 +43,7 @@ function Delta({items,rank}:{items:Observation[];rank:number}) {
   const values=items.filter(x=>x.scene.status==="passed"&&x.scene.ranks.some(r=>r.rank===rank));
   if(values.length<2)return <span className="muted">首个有效时间点</span>;
   const a=values.at(-2)!.scene,b=values.at(-1)!.scene;
-  if(a.comparison_key!==b.comparison_key)return <span className="muted">口径不同，见测试条件</span>;
-  if(!toolchainEqual(a,b))return <span className="muted">工具链变化 · 请结合环境解读</span>;
-  const before=a.ranks.find(r=>r.rank===rank)!.mean_step_cycles,after=b.ranks.find(r=>r.rank===rank)!.mean_step_cycles;
+  const before=ms(a.ranks.find(r=>r.rank===rank)!.mean_step_cycles,a.frequency_mhz),after=ms(b.ranks.find(r=>r.rank===rank)!.mean_step_cycles,b.frequency_mhz);
   return <span className={after===before?"unchanged":after<before?"improved":"regressed"}>{after===before?"耗时与上次相同":`${after<before?"↓":"↑"} ${Math.abs((after/before-1)*100).toFixed(2)}% · 较上次`}</span>;
 }
 function TrendChart({items,rank,onSelect,selected}:{items:Observation[];rank:number;onSelect:(id:string)=>void;selected:string}) {
@@ -60,8 +58,7 @@ function TrendChart({items,rank,onSelect,selected}:{items:Observation[];rank:num
     {[0,1/3,2/3,1].map(t=><g key={t}><line x1={left} x2={right} y1={120-t*80} y2={120-t*80} stroke="#e8ebf0"/><text x={left-16} y={124-t*80} textAnchor="end">{(ceiling*t).toFixed(0)}</text></g>)}
     {items.slice(1).map((item,i)=>{
       const prev=items[i];if(prev.scene.status!=="passed"||item.scene.status!=="passed"||!prev.scene.ranks.some(r=>r.rank===rank)||!item.scene.ranks.some(r=>r.rank===rank))return null;
-      const changed=prev.scene.comparison_key!==item.scene.comparison_key||!toolchainEqual(prev.scene,item.scene);
-      return <g key={item.run.report_id}><line x1={x(prev)} y1={y(prev)} x2={x(item)} y2={y(item)} stroke={changed?"#b8c0d0":"#645be8"} strokeWidth="2" strokeDasharray={changed?"4 5":undefined}/>
+      return <g key={item.run.report_id}><line x1={x(prev)} y1={y(prev)} x2={x(item)} y2={y(item)} stroke="#645be8" strokeWidth="2"/>
         </g>;
     })}
     {valid.map(item=><g key={item.run.report_id}>
@@ -120,12 +117,14 @@ export default function App() {
       <div className="model-grid">{models.map(([id,name])=>{
         const history=runs.filter(r=>r.scenes.some(s=>s.model_id===id));
         const ss=groupedScenes(history.flatMap(r=>r.scenes.filter(s=>s.model_id===id)));
-        const ready=ss.filter(s=>s.status==="passed");
+        const successful=latestSuccessfulScenes(history,id);
+        const ready=ss.filter(s=>successful.has(sceneGroupId(s)));
         const failed=ss.some(s=>s.status==="failed");
+        const pending=ss.some(s=>s.status==="dependency_unavailable");
         return <button className={`model-card ${ready.length?"ready":"pending"}`} key={id} onClick={()=>openModel(id)}>
-          <div className="card-topline"><span className="model-family">{name.split("-")[0]}</span><span className={`availability ${ready.length?"available":failed?"error":"waiting"}`}><i/>{ready.length?"测量可用":failed?"执行失败":"等待上游依赖"}</span></div>
+          <div className="card-topline"><span className="model-family">{name.split("-")[0]}</span><span className={`availability ${failed?"error":pending?"waiting":ready.length?"available":"waiting"}`}><i/>{failed?"最近执行失败":pending?"等待上游依赖":ready.length?"测量可用":"等待测量"}</span></div>
           <h2>{name}</h2><p className="card-spec">{ss[0]?.parameters.dtype} <span>·</span> TP{ss[0]?.parameters.tp} <span>·</span> {ss.length} 个场景</p>
-          <div className="card-scenarios">{ss.map(s=>{const r=s.ranks.find(r=>r.rank===0);return <div className="card-scene" key={sceneGroupId(s)}><span>Context <strong>{s.parameters.context.toLocaleString("en-US")}</strong></span>{r?<span className="card-time">{displayTime(ms(r.mean_step_cycles,s.frequency_mhz))}<small>ms/step</small></span>:<span className="muted">{states[s.status]}</span>}</div>;})}</div>
+          <div className="card-scenarios">{ss.map(s=>{const measured=successful.get(sceneGroupId(s));const r=measured?.scene.ranks.find(r=>r.rank===0);return <div className="card-scene" key={sceneGroupId(s)}><span>Context <strong>{s.parameters.context.toLocaleString("en-US")}</strong></span>{r&&measured?<span className="card-time" title={date(measured.run.created_at)}>{displayTime(ms(r.mean_step_cycles,measured.scene.frequency_mhz))}<small>{s.status!=="passed"?"最近成功 · ":""}ms/step</small></span>:<span className="muted">{states[s.status]}</span>}</div>;})}</div>
           <div className="card-bottom"><span>{history.length} 次 CI 记录 <span>·</span> {date(history.at(-1)!.created_at)}</span><span>{ready.length?"进入模型":"查看状态"} <b>↗</b></span></div></button>;
       })}</div>
       <section className="activity-section"><div className="section-heading"><h2>最近采集</h2><span>每次 CI，独立留档</span></div><div className="activity-list">{runs.slice(-3).reverse().map(r=>{const passed=r.scenes.filter(s=>s.status==="passed").length,pending=r.scenes.filter(s=>s.status==="dependency_unavailable").length,failed=r.scenes.filter(s=>s.status==="failed").length;return <button className="activity-row" key={r.report_id} onClick={()=>setQuery({model:r.scenes[0].model_id,view:"compare",run:r.report_id})}><span className="activity-icon">↗</span><span className="activity-date">{date(r.created_at)}<small>{r.commit.slice(0,8)}</small></span><span className="activity-models">{[...new Set(r.scenes.map(s=>s.model))].join(" / ")}</span><span className="activity-status"><span>{passed} 场景完成</span>{pending>0&&<em>{pending} 等待依赖</em>}{failed>0&&<em>{failed} 执行失败</em>}</span><span className="row-arrow">→</span></button>;})}</div></section>
@@ -138,16 +137,11 @@ export default function App() {
         {tab!=="trend"&&<label>CI 记录<select value={(tab==="compare"?selectedRun?.report_id:selected?.run.report_id)??""} onChange={e=>{setExcluded([]);navigate({run:e.target.value});}}>{[...(tab==="compare"?modelRuns:items.map(i=>i.run))].reverse().map(r=><option key={r.report_id} value={r.report_id}>{date(r.created_at)} · {r.commit.slice(0,8)}</option>)}</select></label>}
         <label>统计 rank<select aria-label="统计 rank" value={rank} onChange={e=>navigate({rank:e.target.value})}>{Array.from({length:maxRank},(_,r)=><option key={r} value={r}>Rank {r}</option>)}</select></label>
         <span className="filter-note">合成输入 · 不含 prefill · 非设备 E2E latency</span></div>
-      {tab!=="compare"&&selected&&<details className="environment"><summary>测试条件</summary>
-        <p>{conditionDescription(selected.scene)}；常规计时样本 {selectedRank?.step_count??"未生成"} 步。</p>
-        <p>每步执行完整模型。共享合成权重仅复用只读权重，KV/GDN state 独立；历史执行模式、工具链和采样次数可能变化，原始参数保留，不将跨条件差值解释为单项优化收益。</p>
-        <p>独立算子参考可能使用不同 kernel，不能与整模耗时相减解释为框架开销。</p>
-      </details>}
       {tab==="trend"&&scene&&<>
         <section className="panel trend-panel"><div className="trend-topline"><div><h2>常规 decode 耗时</h2><p className="section-description">{label(scene)} · Rank {rank}</p></div><div className="chart-context">{items.length} 次记录 <span>·</span> ms/step，越低越快</div></div>
           <div className="trend-headline"><div className="headline-value">{selectedRank?displayTime(ms(selectedRank.mean_step_cycles,selected!.scene.frequency_mhz)):"—"}<small>ms/step</small></div><div className="headline-change"><span>对比前次记录</span><Delta items={selected?items.slice(0,items.indexOf(selected)+1):items} rank={rank}/></div><div className="headline-source"><span>{selected?date(selected.run.created_at):"—"}</span><code>{selected?.run.commit.slice(0,8)}</code></div></div>
           <TrendChart items={items} rank={rank} selected={selected?.run.report_id??""} onSelect={id=>navigate({run:id})}/>
-          <p className="chart-note">按 CI 顺序等距展示；空心点表示结果复用。虚线标记环境变化，失败记录不连线。</p></section>
+</section>
       </>}
       {tab==="compare"&&<div className="comparison-overview">{visible.map(s=>{const r=s.ranks.find(r=>r.rank===rank);const top=r?Object.entries(r.module_cycles).sort((a,b)=>b[1]-a[1])[0]:null;const total=r?Object.values(r.module_cycles).reduce((a,b)=>a+b,0):0;return <div className="comparison-card" key={s.scene_id}><div className="comparison-card-title"><span>Context <strong>{s.parameters.context.toLocaleString("en-US")}</strong></span><span>B{s.parameters.batch} · TP{s.parameters.tp} · Rank {rank}</span></div><div className="comparison-card-value">{r?displayTime(ms(r.mean_step_cycles,s.frequency_mhz)):"—"}<small>ms/step</small></div>{top?<div className="dominant-module"><i style={{background:color(top[0])}}/>{top[0]}<span>占比 {(top[1]/total*100).toFixed(1)}%</span></div>:<Status scene={s}/>}</div>;})}</div>}
       {(tab==="trend"||tab==="compare")&&<section className="panel"><div className="panel-heading"><div><h2>{tab==="compare"?"同次 CI · 场景构成":"模块构成随时间变化"}</h2><p>{tab==="compare"?`${selectedRun?date(selectedRun.created_at):""} · Rank ${rank} · 相同 CI 下的不同场景`:`固定场景 · Rank ${rank} · 每次执行都保留记录`}</p></div>
