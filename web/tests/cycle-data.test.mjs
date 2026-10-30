@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {test} from 'node:test';
-import {sceneSchema, catalogSchema, toolchainEqual, ms, label, sceneGroupId, groupedScenes, scenesForRun, observations, conditionDescription, latestSuccessfulScenes, nonCommunicationRuns} from '../lib/cycle-data.ts';
+import {sceneSchema, catalogSchema, toolchainEqual, ms, label, sceneGroupId, groupedScenes, scenesForRun, observations, conditionDescription, latestSuccessfulScenes, nonCommunicationRuns, inlineReportObservation} from '../lib/cycle-data.ts';
 const fixture=JSON.parse(readFileSync(new URL('../../tests/fixtures/measurement-summary.json',import.meta.url)));
 
 test('upstream-produced summary crosses the public frontend contract',()=>{
@@ -117,4 +117,21 @@ test('missing TP communication is unavailable; TP1 and explicit zero remain meas
   scene.parameters.tp=2;assert.equal(project().ranks.length,0);assert.equal(project().status,'passed');
   scene.ranks[0].module_cycles['通信']=0;assert.equal(project().ranks[0].mean_step_cycles,100);
   scene.ranks[0].module_cycles['通信']=101;assert.equal(project().ranks.length,0);
+});
+
+
+test('inline model report follows selected history and rank without hiding failures',()=>{
+  const success=sceneSchema.parse(fixture.scenes[0]);
+  success.details={'0':'runs/aaaaaaaaaaaaaaaa/short/rank0.html','1':'runs/aaaaaaaaaaaaaaaa/short/rank1.html'};
+  const failed=structuredClone(success);failed.status='failed';failed.ranks=[];delete failed.details;
+  const future=structuredClone(success);future.details={'0':'runs/cccccccccccccccc/short/rank0.html'};
+  const items=[{run:{report_id:'a'},scene:success},{run:{report_id:'b'},scene:failed},{run:{report_id:'c'},scene:future}];
+  const snapshot=structuredClone(items);
+  assert.equal(inlineReportObservation(items,'a',0),items[0]);
+  assert.equal(inlineReportObservation(items,'b',0),items[0]);
+  assert.equal(inlineReportObservation(items,'b',1),items[0]);
+  assert.equal(inlineReportObservation(items,'c',0),items[2]);
+  assert.equal(inlineReportObservation(items,'a',2),undefined);
+  assert.equal(inlineReportObservation(items,'missing',0),undefined);
+  assert.deepEqual(items,snapshot);
 });

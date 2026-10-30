@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useHref, useSearchParams } from "react-router-dom";
 import { reportBasePath } from "./lib/report-path";
-import { catalogSchema, color, date, format, label, ms, observations, states, latestSuccessfulScenes, sceneGroupId, groupedScenes, scenesForRun, conditionDescription, nonCommunicationRuns } from "./lib/cycle-data";
+import { catalogSchema, color, date, format, label, ms, observations, states, latestSuccessfulScenes, sceneGroupId, groupedScenes, scenesForRun, conditionDescription, nonCommunicationRuns, inlineReportObservation } from "./lib/cycle-data";
 import type { Observation, Rank, Run, Scene } from "./lib/cycle-data";
 import "./cycles.css";
 
@@ -105,6 +105,8 @@ export default function App() {
   const max=Math.max(1,...bars.flatMap(i=>i.scene.ranks.filter(r=>r.rank===rank).map(r=>ms(r.mean_step_cycles,i.scene.frequency_mhz))));
   const selectedRank=selected?.scene.ranks.find(r=>r.rank===rank);
   const detail=selected?.scene.details?.[String(rank)];
+  const embedded=selected?inlineReportObservation(items,selected.run.report_id,rank):undefined;
+  const embeddedDetail=embedded?.scene.details?.[String(rank)];
   const modelName=models.find(([id])=>id===model)?.[1];
   const latest=runs.at(-1);
   const comparisonValues=visible.flatMap(s=>s.ranks.filter(r=>r.rank===rank).map(r=>ms(r.mean_step_cycles,s.frequency_mhz)));
@@ -137,6 +139,11 @@ export default function App() {
         {tab!=="trend"&&<label>CI 记录<select value={(tab==="compare"?selectedRun?.report_id:selected?.run.report_id)??""} onChange={e=>{setExcluded([]);navigate({run:e.target.value});}}>{[...(tab==="compare"?modelRuns:items.map(i=>i.run))].reverse().map(r=><option key={r.report_id} value={r.report_id}>{date(r.created_at)} · {r.commit.slice(0,8)}</option>)}</select></label>}
         <label>统计 rank<select aria-label="统计 rank" value={rank} onChange={e=>navigate({rank:e.target.value})}>{Array.from({length:maxRank},(_,r)=><option key={r} value={r}>Rank {r}</option>)}</select></label>
         <span className="filter-note">合成输入 · 非通信 kernel · 不含 prefill · 非设备 E2E latency</span></div>
+      {tab!=="compare"&&embedded&&embeddedDetail&&<section className="panel report-panel">
+        <div className="panel-heading"><div><h2>完整测量报告</h2><p>{label(embedded.scene)} · Rank {rank} · {date(embedded.run.created_at)}{embedded.run.report_id!==selected?.run.report_id?" · 最近成功记录":""}</p></div><a href={`${base}${embeddedDetail}`} target="_blank" rel="noreferrer">独立打开 ↗</a></div>
+        <p className="chart-note">Block、kernel 与执行阶段明细。原始报告保留采集时的分项与合计；页面主指标不含通信。</p>
+        <iframe key={embeddedDetail} title="完整测量报告" src={`${base}${embeddedDetail}`} sandbox=""/>
+      </section>}
       {tab==="trend"&&scene&&<>
         <section className="panel trend-panel"><div className="trend-topline"><div><h2>非通信 kernel 耗时</h2><p className="section-description">{label(scene)} · Rank {rank}</p></div><div className="chart-context">{items.length} 次记录 <span>·</span> ms/step，越低越快</div></div>
           <div className="trend-headline"><div className="headline-value">{selectedRank?displayTime(ms(selectedRank.mean_step_cycles,selected!.scene.frequency_mhz)):"—"}<small>ms/step</small></div><div className="headline-change"><span>对比前次记录</span><Delta items={selected?items.slice(0,items.indexOf(selected)+1):items} rank={rank}/></div><div className="headline-source"><span>{selected?date(selected.run.created_at):"—"}</span><code>{selected?.run.commit.slice(0,8)}</code></div></div>
