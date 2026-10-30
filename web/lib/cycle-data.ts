@@ -90,3 +90,6 @@ export function inlineReportObservation(items: Observation[], selectedId: string
   // A failed observation stays failed; show its latest preceding report separately.
   return items.slice(0,index+1).reverse().find(item=>item.scene.status==="passed"&&Boolean(item.scene.details?.[String(rank)]));
 }
+
+export const detailReportPath = (path: string) => path.replace(/\.html$/, "-compute.html");
+export const showInlineReport = (tab: string) => tab === "detail";
