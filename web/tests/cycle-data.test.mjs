@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {test} from 'node:test';
-import {sceneSchema, catalogSchema, toolchainEqual, ms, label, sceneGroupId, groupedScenes, scenesForRun, observations, conditionDescription} from '../lib/cycle-data.ts';
+import {sceneSchema, catalogSchema, toolchainEqual, ms, label, sceneGroupId, groupedScenes, scenesForRun, observations, conditionDescription, latestSuccessfulScenes, nonCommunicationRuns} from '../lib/cycle-data.ts';
 const fixture=JSON.parse(readFileSync(new URL('../../tests/fixtures/measurement-summary.json',import.meta.url)));
 
 test('upstream-produced summary crosses the public frontend contract',()=>{
@@ -74,4 +74,47 @@ test('configured historical IDs form exactly three model cards with two context 
   });
   const groups=groupedScenes(scenes);assert.equal(groups.length,6);
   for(const model of new Set(groups.map(s=>s.model_id)))assert.equal(groups.filter(s=>s.model_id===model).length,2);
+});
+
+
+test('overview retains last successful time without rewriting latest failed history',()=>{
+  const success=sceneSchema.parse(fixture.scenes[0]);
+  const failed=structuredClone(success);failed.status='failed';failed.ranks=[];
+  const pending=structuredClone(success);pending.status='dependency_unavailable';pending.ranks=[];
+  const long=structuredClone(success);long.parameters.context=85000;long.scene_id+='-long';long.status='failed';long.ranks=[];
+  const runs=[{report_id:'a',scenes:[success]},{report_id:'b',scenes:[failed,long]},{report_id:'c',scenes:[pending]}];
+  const snapshot=structuredClone(runs);
+  const cards=latestSuccessfulScenes(runs,success.model_id);
+  assert.equal(cards.get(sceneGroupId(success)).run.report_id,'a');
+  assert.equal(cards.has(sceneGroupId(long)),false);
+  assert.equal(latestSuccessfulScenes(runs,success.model_id,1).size,0);
+  assert.equal(observations(runs,success.model_id,success.scene_id).at(-1).scene.status,'dependency_unavailable');
+  const newer=structuredClone(success);newer.ranks[0].mean_step_cycles=50;
+  assert.equal(latestSuccessfulScenes([...runs,{report_id:'d',scenes:[newer]}],success.model_id).get(sceneGroupId(success)).scene.ranks[0].mean_step_cycles,50);
+  assert.deepEqual(runs,snapshot);
+});
+
+
+test('non-communication presentation subtracts per-rank counters without changing archives',()=>{
+  const scene=sceneSchema.parse(fixture.scenes[0]);scene.parameters.tp=2;
+  scene.ranks=[{rank:0,sample_cycles:[100,200],step_count:2,module_cycles:{GDN:180,"通信":120},mean_step_cycles:150},
+    {rank:1,sample_cycles:[100,200],step_count:2,module_cycles:{GDN:240,"通信":60},mean_step_cycles:150}];
+  const runs=[{report_id:'a',scenes:[scene]}],snapshot=structuredClone(runs);
+  const view=nonCommunicationRuns(runs),ranks=view[0].scenes[0].ranks;
+  assert.deepEqual(ranks.map(r=>r.mean_step_cycles),[90,120]);
+  assert.deepEqual(ranks.map(r=>r.module_cycles),[{GDN:180},{GDN:240}]);
+  assert.deepEqual(runs,snapshot);
+  const history=observations(view,scene.model_id,scene.scene_id);
+  assert.equal(history[0].scene.ranks[0].mean_step_cycles,90);
+  assert.equal(latestSuccessfulScenes(view,scene.model_id).get(sceneGroupId(scene)).scene.ranks[0].mean_step_cycles,90);
+});
+
+test('missing TP communication is unavailable; TP1 and explicit zero remain measurable',()=>{
+  const scene=sceneSchema.parse(fixture.scenes[0]);
+  scene.ranks=[{rank:0,sample_cycles:[100],step_count:1,module_cycles:{GDN:100},mean_step_cycles:100}];
+  const project=()=>nonCommunicationRuns([{scenes:[scene]}])[0].scenes[0];
+  scene.parameters.tp=1;assert.equal(project().ranks[0].mean_step_cycles,100);
+  scene.parameters.tp=2;assert.equal(project().ranks.length,0);assert.equal(project().status,'passed');
+  scene.ranks[0].module_cycles['通信']=0;assert.equal(project().ranks[0].mean_step_cycles,100);
+  scene.ranks[0].module_cycles['通信']=101;assert.equal(project().ranks.length,0);
 });

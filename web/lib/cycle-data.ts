@@ -53,3 +53,32 @@ export function observations(runs: Run[],model: string,scene: string): Observati
   const key=match ? sceneGroupId(match) : scene;
   return runs.flatMap(run=>scenesForRun(run,model).filter(s=>sceneGroupId(s)===key).map(s=>({run,scene:s})));
 }
+
+
+// Overview cards may show the last successful measurement while the latest
+// observation and the history retain their actual failure/pending status.
+export function latestSuccessfulScenes(runs: Run[], model: string, rank=0): Map<string, Observation> {
+  const result=new Map<string, Observation>();
+  for(const run of runs)for(const scene of scenesForRun(run,model)) {
+    if(scene.status==="passed"&&scene.ranks.some(value=>value.rank===rank))
+      result.set(sceneGroupId(scene),{run,scene});
+  }
+  return result;
+}
+
+
+// Presentation only: keep catalog archives and raw samples unchanged.
+export function nonCommunicationRuns(runs: Run[]): Run[] {
+  return runs.map(run => ({...run, scenes: run.scenes.map(scene => ({...scene,
+    ranks: scene.ranks.flatMap(rank => {
+      const declared=Object.hasOwn(rank.module_cycles,"通信");
+      // TP1 has no inter-rank collectives. TP2+ needs an explicit counter.
+      if(scene.parameters.tp>1&&!declared)return [];
+      const communication=rank.module_cycles["通信"]??0;
+      const total=rank.sample_cycles.reduce((a,b)=>a+b,0);
+      if(communication>total)return [];
+      const modules=Object.fromEntries(Object.entries(rank.module_cycles).filter(([name])=>name!=="通信"));
+      return [{...rank,module_cycles:modules,mean_step_cycles:(total-communication)/rank.step_count}];
+    })
+  }))}));
+}
