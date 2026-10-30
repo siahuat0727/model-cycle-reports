@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useHref, useSearchParams } from "react-router-dom";
 import { reportBasePath } from "./lib/report-path";
-import { catalogSchema, color, date, format, label, ms, observations, states, latestSuccessfulScenes, sceneGroupId, groupedScenes, scenesForRun, conditionDescription } from "./lib/cycle-data";
+import { catalogSchema, color, date, format, label, ms, observations, states, latestSuccessfulScenes, sceneGroupId, groupedScenes, scenesForRun, conditionDescription, nonCommunicationRuns } from "./lib/cycle-data";
 import type { Observation, Rank, Run, Scene } from "./lib/cycle-data";
 import "./cycles.css";
 
@@ -54,7 +54,7 @@ function TrendChart({items,rank,onSelect,selected}:{items:Observation[];rank:num
   const width=Math.max(1000,items.length*150),left=55,right=width-45;
   const x=(item:Observation)=>items.length===1?(left+right)/2:left+48+items.indexOf(item)/(items.length-1)*(right-left-48);
   const y=(item:Observation)=>120-ms(item.scene.ranks.find(r=>r.rank===rank)!.mean_step_cycles,item.scene.frequency_mhz)/ceiling*80;
-  return <div className="trend-chart"><svg viewBox={`0 0 ${width} 190`} style={{minWidth:items.length>5?width:undefined}} role="img" aria-label="常规 decode 历史耗时，按 CI 顺序等距展示，单位 ms/step，越低越快">
+  return <div className="trend-chart"><svg viewBox={`0 0 ${width} 190`} style={{minWidth:items.length>5?width:undefined}} role="img" aria-label="非通信 kernel 历史耗时，按 CI 顺序等距展示，单位 ms/step，越低越快">
     {[0,1/3,2/3,1].map(t=><g key={t}><line x1={left} x2={right} y1={120-t*80} y2={120-t*80} stroke="#e8ebf0"/><text x={left-16} y={124-t*80} textAnchor="end">{(ceiling*t).toFixed(0)}</text></g>)}
     {items.slice(1).map((item,i)=>{
       const prev=items[i];if(prev.scene.status!=="passed"||item.scene.status!=="passed"||!prev.scene.ranks.some(r=>r.rank===rank)||!item.scene.ranks.some(r=>r.rank===rank))return null;
@@ -83,7 +83,7 @@ export default function App() {
   const [excluded,setExcluded]=useState<string[]>([]);
   const [activeModule,setActiveModule]=useState<string|null>(null);
   useEffect(()=>{const controller=new AbortController();fetch(`${base}catalog.json`,{signal:controller.signal,cache:"no-store"}).then(async r=>{
-    if(!r.ok)throw new Error();const data=catalogSchema.parse(await r.json());setRuns([...data.runs].sort((a,b)=>Date.parse(a.created_at)-Date.parse(b.created_at)));setMessage(data.runs.length?"":"尚无测量记录。CI 结果同步后会显示在这里。");
+    if(!r.ok)throw new Error();const data=catalogSchema.parse(await r.json());setRuns(nonCommunicationRuns([...data.runs].sort((a,b)=>Date.parse(a.created_at)-Date.parse(b.created_at))));setMessage(data.runs.length?"":"尚无测量记录。CI 结果同步后会显示在这里。");
   }).catch(()=>{if(!controller.signal.aborted)setMessage("暂时无法读取测量记录，请刷新重试。");});return()=>controller.abort();},[base]);
   const model=query.get("model")??"";const models=[...new Map(runs.flatMap(r=>r.scenes).map(s=>[s.model_id,s.model])).entries()];
   const modelRuns=runs.filter(r=>r.scenes.some(s=>s.model_id===model));
@@ -110,7 +110,7 @@ export default function App() {
   const comparisonValues=visible.flatMap(s=>s.ranks.filter(r=>r.rank===rank).map(r=>ms(r.mean_step_cycles,s.frequency_mhz)));
   const spread=comparisonValues.length>1?Math.max(...comparisonValues)-Math.min(...comparisonValues):null;
   return <div className="cycle-app"><header className="topbar"><button className="brand" onClick={()=>setQuery({})}><span className="brand-icon"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 17V11M9 17V6M14 17V9M19 17V3" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/></svg></span><span>模型性能观测<small>MODEL OBSERVATORY</small></span></button>
-    <div className="top-meta">性能基准工作台</div><span className="scope-tag"><i/>C++ CycleSim<span>常规 decode</span></span></header>
+    <div className="top-meta">性能基准工作台</div><span className="scope-tag"><i/>C++ CycleSim<span>非通信 kernel</span></span></header>
     <main className="workspace">{message?<Empty>{message}</Empty>:!modelName?<>
       <div className="home-heading"><div><div className="eyebrow">PERFORMANCE / OVERVIEW</div><h1>模型性能概览<span className="heading-dot">.</span></h1><p className="intro">从每次测量，追踪模型表现与模块变化。</p></div><div className="update-label"><span>最近采集</span><strong>{latest?date(latest.created_at):"—"}</strong></div></div>
       <div className="section-label"><span>全部模型 <small>{models.length.toString().padStart(2,"0")}</small></span><span>场景独立观测 · 各 rank 独立统计</span></div>
@@ -124,11 +124,11 @@ export default function App() {
         return <button className={`model-card ${ready.length?"ready":"pending"}`} key={id} onClick={()=>openModel(id)}>
           <div className="card-topline"><span className="model-family">{name.split("-")[0]}</span><span className={`availability ${failed?"error":pending?"waiting":ready.length?"available":"waiting"}`}><i/>{failed?"最近执行失败":pending?"等待上游依赖":ready.length?"测量可用":"等待测量"}</span></div>
           <h2>{name}</h2><p className="card-spec">{ss[0]?.parameters.dtype} <span>·</span> TP{ss[0]?.parameters.tp} <span>·</span> {ss.length} 个场景</p>
-          <div className="card-scenarios">{ss.map(s=>{const measured=successful.get(sceneGroupId(s));const r=measured?.scene.ranks.find(r=>r.rank===0);return <div className="card-scene" key={sceneGroupId(s)}><span>Context <strong>{s.parameters.context.toLocaleString("en-US")}</strong></span>{r&&measured?<span className="card-time" title={date(measured.run.created_at)}>{displayTime(ms(r.mean_step_cycles,measured.scene.frequency_mhz))}<small>{s.status!=="passed"?"最近成功 · ":""}ms/step</small></span>:<span className="muted">{states[s.status]}</span>}</div>;})}</div>
+          <div className="card-scenarios">{ss.map(s=>{const measured=successful.get(sceneGroupId(s));const r=measured?.scene.ranks.find(r=>r.rank===0);return <div className="card-scene" key={sceneGroupId(s)}><span>Context <strong>{s.parameters.context.toLocaleString("en-US")}</strong></span>{r&&measured?<span className="card-time" title={date(measured.run.created_at)}>{displayTime(ms(r.mean_step_cycles,measured.scene.frequency_mhz))}<small>{s.status!=="passed"?"最近成功 · ":""}ms/step</small></span>:<span className="muted">{s.status==="passed"?"非通信数据缺测":states[s.status]}</span>}</div>;})}</div>
           <div className="card-bottom"><span>{history.length} 次 CI 记录 <span>·</span> {date(history.at(-1)!.created_at)}</span><span>{ready.length?"进入模型":"查看状态"} <b>↗</b></span></div></button>;
       })}</div>
       <section className="activity-section"><div className="section-heading"><h2>最近采集</h2><span>每次 CI，独立留档</span></div><div className="activity-list">{runs.slice(-3).reverse().map(r=>{const passed=r.scenes.filter(s=>s.status==="passed").length,pending=r.scenes.filter(s=>s.status==="dependency_unavailable").length,failed=r.scenes.filter(s=>s.status==="failed").length;return <button className="activity-row" key={r.report_id} onClick={()=>setQuery({model:r.scenes[0].model_id,view:"compare",run:r.report_id})}><span className="activity-icon">↗</span><span className="activity-date">{date(r.created_at)}<small>{r.commit.slice(0,8)}</small></span><span className="activity-models">{[...new Set(r.scenes.map(s=>s.model))].join(" / ")}</span><span className="activity-status"><span>{passed} 场景完成</span>{pending>0&&<em>{pending} 等待依赖</em>}{failed>0&&<em>{failed} 执行失败</em>}</span><span className="row-arrow">→</span></button>;})}</div></section>
-      <div className="scope-footnote"><span>统计口径</span>合成输入 · 常规 decode · 不含 prefill 与完整设备 E2E latency <span className="scope-rank">卡片耗时展示 Rank 0</span></div>
+      <div className="scope-footnote"><span>统计口径</span>合成输入 · 非通信 kernel 耗时 · 不含 prefill 与完整设备 E2E latency <span className="scope-rank">卡片耗时展示 Rank 0</span></div>
     </>:<>
       <nav className="breadcrumb"><button onClick={()=>setQuery({})}>全部模型</button><span>/</span><select aria-label="模型" value={model} onChange={e=>openModel(e.target.value)}>{models.map(([id,name])=><option key={id} value={id}>{name}</option>)}</select></nav>
       <div className="model-heading"><div><h1>{modelName}</h1><p className="intro">{scenes[0]?.parameters.dtype} <span>·</span> TP{scenes[0]?.parameters.tp} <span>·</span> {scenes.length} 个场景 <span>·</span> {modelRuns.length} 次 CI 记录</p></div><div className="model-update"><span>最近采集</span><strong>{modelRuns.length?date(modelRuns.at(-1)!.created_at):"—"}</strong></div></div>
@@ -136,9 +136,9 @@ export default function App() {
       <div className="filters">{tab!=="compare"&&<label>场景<select value={scene?sceneGroupId(scene):""} onChange={e=>navigate({scene:e.target.value,run:null})}>{scenes.map(s=><option key={sceneGroupId(s)} value={sceneGroupId(s)}>{label(s)}</option>)}</select></label>}
         {tab!=="trend"&&<label>CI 记录<select value={(tab==="compare"?selectedRun?.report_id:selected?.run.report_id)??""} onChange={e=>{setExcluded([]);navigate({run:e.target.value});}}>{[...(tab==="compare"?modelRuns:items.map(i=>i.run))].reverse().map(r=><option key={r.report_id} value={r.report_id}>{date(r.created_at)} · {r.commit.slice(0,8)}</option>)}</select></label>}
         <label>统计 rank<select aria-label="统计 rank" value={rank} onChange={e=>navigate({rank:e.target.value})}>{Array.from({length:maxRank},(_,r)=><option key={r} value={r}>Rank {r}</option>)}</select></label>
-        <span className="filter-note">合成输入 · 不含 prefill · 非设备 E2E latency</span></div>
+        <span className="filter-note">合成输入 · 非通信 kernel · 不含 prefill · 非设备 E2E latency</span></div>
       {tab==="trend"&&scene&&<>
-        <section className="panel trend-panel"><div className="trend-topline"><div><h2>常规 decode 耗时</h2><p className="section-description">{label(scene)} · Rank {rank}</p></div><div className="chart-context">{items.length} 次记录 <span>·</span> ms/step，越低越快</div></div>
+        <section className="panel trend-panel"><div className="trend-topline"><div><h2>非通信 kernel 耗时</h2><p className="section-description">{label(scene)} · Rank {rank}</p></div><div className="chart-context">{items.length} 次记录 <span>·</span> ms/step，越低越快</div></div>
           <div className="trend-headline"><div className="headline-value">{selectedRank?displayTime(ms(selectedRank.mean_step_cycles,selected!.scene.frequency_mhz)):"—"}<small>ms/step</small></div><div className="headline-change"><span>对比前次记录</span><Delta items={selected?items.slice(0,items.indexOf(selected)+1):items} rank={rank}/></div><div className="headline-source"><span>{selected?date(selected.run.created_at):"—"}</span><code>{selected?.run.commit.slice(0,8)}</code></div></div>
           <TrendChart items={items} rank={rank} selected={selected?.run.report_id??""} onSelect={id=>navigate({run:id})}/>
 </section>
@@ -151,7 +151,7 @@ export default function App() {
         <div className="bar-list">{bars.map(item=>{const r=item.scene.ranks.find(r=>r.rank===rank);
           return <div className={`bar-row ${selected?.run.report_id===item.run.report_id&&tab==="trend"?"selected":""}`} key={`${item.run.report_id}-${item.scene.scene_id}`}>
             <div className="bar-label"><strong>{tab==="compare"?`context ${item.scene.parameters.context.toLocaleString("en-US")}`:date(item.run.created_at)}</strong><small>{tab==="compare"?`B${item.scene.parameters.batch} · ${item.scene.parameters.dtype}`:item.run.commit.slice(0,8)}</small></div>
-            <div>{r?<Modules rank={r} scene={item.scene} max={max} relative={relative} activeModule={activeModule} onActive={setActiveModule}/>:<span className="muted">{item.scene.status==="passed"?"此场景无该 rank":states[item.scene.status]}</span>}
+            <div>{r?<Modules rank={r} scene={item.scene} max={max} relative={relative} activeModule={activeModule} onActive={setActiveModule}/>:<span className="muted">{item.scene.status==="passed"?"非通信数据缺测":states[item.scene.status]}</span>}
               {tab==="trend"&&<small className="bar-annotation">{item.scene.same_as?"数值未变 · 复用已有报告":""}</small>}</div>
             <div className="bar-value">{r?<><strong>{displayTime(ms(r.mean_step_cycles,item.scene.frequency_mhz))}</strong><small>ms/step</small></>:<Status scene={item.scene}/>}</div>
             <button className="text-button" disabled={!r||Boolean(item.scene.same_as)} onClick={()=>navigate({view:"detail",scene:sceneGroupId(item.scene),run:item.run.report_id})}>{item.scene.same_as?"结果相同":"详情 ↗"}</button>
@@ -164,14 +164,15 @@ export default function App() {
         <div className="detail-intro"><Status scene={selected.scene}/><span>{date(selected.run.created_at)} · commit {selected.run.commit.slice(0,12)}</span><span>{label(selected.scene)}</span></div>
         {selected.scene.same_as&&<div className="notice">本次性能结果与已有记录相同，下面复用已有详情。当前 CI 的时间、版本和环境仍独立保留；详情内的采集来源对应原记录。</div>}
         {selectedRank?<>
-          <div className="metrics"><div><span>常规 decode</span><strong>{format(ms(selectedRank.mean_step_cycles,selected.scene.frequency_mhz))}<small>ms/step</small></strong><p>{selectedRank.step_count} 个非结束 step · Rank {rank}</p></div>
+          <div className="metrics"><div><span>非通信 kernel</span><strong>{format(ms(selectedRank.mean_step_cycles,selected.scene.frequency_mhz))}<small>ms/step</small></strong><p>{selectedRank.step_count} 个非结束 step · Rank {rank}</p></div>
             <div><span>独立算子参考 · Rank {selected.scene.probe_rank}</span><strong>{selected.scene.probe_baseline_cycles!==null?format(ms(selected.scene.probe_baseline_cycles,selected.scene.frequency_mhz)):"—"}<small>ms/step</small></strong><p>独立 probes × 次数 × 层数；不用于计算框架开销差额</p></div>
             <div><span>计时样本</span><strong>{selectedRank.step_count}<small>step</small></strong><p>完整模型执行 · 结束 step 不计入常规耗时</p></div></div>
           <section className="panel"><div className="panel-heading"><div><h2>模块时间与占比</h2><p>当前场景 · 当前记录 · Rank {rank}</p></div></div><Modules rank={selectedRank} scene={selected.scene}/><ModuleTable scene={selected.scene} rank={selectedRank}/></section>
-        </>:<Empty>{selected.scene.status==="dependency_unavailable"?"上游依赖尚未就绪，本次没有生成性能数值。依赖合并后 rerun 即可补充。":selected.scene.status==="failed"?"本场景执行失败。未生成有效性能数值，请查看源 CI 诊断。":"此场景无所选 rank 的测量。"}</Empty>}
+        </>:<Empty>{selected.scene.status==="dependency_unavailable"?"上游依赖尚未就绪，本次没有生成性能数值。依赖合并后 rerun 即可补充。":selected.scene.status==="failed"?"本场景执行失败。未生成有效性能数值，请查看源 CI 诊断。":"此场景缺少所选 rank 的非通信测量数据。"}</Empty>}
         <details className="environment"><summary>测量条件与来源</summary><p>{conditionDescription(selected.scene)}</p><p>{selected.scene.protocol} · {selected.scene.frequency_mhz} MHz · seed {selected.scene.parameters.seed} · {selected.scene.parameters.fixture}</p>
+          {detail&&<p><a href={`${base}${detail}`} target="_blank" rel="noreferrer">原始测量报告 ↗</a></p>}
           <dl>{Object.entries(selected.scene.environment).map(([name,value])=><div key={name}><dt>{name}</dt><dd>{value??"未记录"}</dd></div>)}</dl></details>
-        {detail&&<section className="panel report-panel"><div className="panel-heading"><div><h2>完整测量报告</h2><p>Block、kernel 与执行阶段</p></div><a href={`${base}${detail}`} target="_blank" rel="noreferrer">独立打开 ↗</a></div><iframe title="完整测量报告" src={`${base}${detail}`} sandbox=""/></section>}
+
       </>}
     </>}</main><footer className="site-footer"><span>MODEL OBSERVATORY <b>/</b> 性能观测</span><span>C++ simulator · 合成数据 · 不用于模型质量验收</span></footer></div>;
 }
