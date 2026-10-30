@@ -82,3 +82,11 @@ export function nonCommunicationRuns(runs: Run[]): Run[] {
     })
   }))}));
 }
+
+
+export function inlineReportObservation(items: Observation[], selectedId: string, rank: number): Observation | undefined {
+  const index=items.findIndex(item=>item.run.report_id===selectedId);
+  if(index<0)return undefined;
+  // A failed observation stays failed; show its latest preceding report separately.
+  return items.slice(0,index+1).reverse().find(item=>item.scene.status==="passed"&&Boolean(item.scene.details?.[String(rank)]));
+}
