@@ -65,6 +65,7 @@ def dashboard_revision():
     files={str(relative):hashlib.sha256(path.read_bytes()).hexdigest()
            for path,relative in dashboard_files()}
     files['publication.json']=sorted(publication.scene_ids())
+    files['report.py']=hashlib.sha256(Path(report.__file__).read_bytes()).hexdigest()
     return catalog.digest(files)
 
 
@@ -178,6 +179,7 @@ class Publisher:
                         target.parent.mkdir(parents=True,exist_ok=True)
                         target.write_text(report.sanitize(rendered,item['run']),encoding='utf-8')
             publication.prune_details(destination,entries)
+            report.write_compute_details(destination,entries)
             report.write_catalog(destination,entries)
             # The public repository owns the dashboard source; the Miaoda repo
             # supplies its platform scaffold and dependencies.

@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 from publisher import catalog, publication
 from publisher.sync import Publisher, dashboard_revision
 from test_catalog import run, scene
+from test_publisher import HTML
 
 
 class PublicationTests(unittest.TestCase):
@@ -56,7 +57,7 @@ class PublicationTests(unittest.TestCase):
                 reports=Path(args[-1])/'public/reports';reports.mkdir(parents=True)
                 (reports/'catalog.json').write_text(json.dumps({'schema_version':1,'runs':entries}))
                 for item in entries[0]['scenes']:
-                    path=reports/item['details']['0'];path.parent.mkdir(parents=True,exist_ok=True);path.write_text('detail')
+                    path=reports/item['details']['0'];path.parent.mkdir(parents=True,exist_ok=True);path.write_text(HTML)
             elif args[:3]==['npm','run','build']:
                 reports=cwd/'public/reports'
                 observed['catalog']=json.loads((reports/'catalog.json').read_text())

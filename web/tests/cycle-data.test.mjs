@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {test} from 'node:test';
-import {sceneSchema, catalogSchema, toolchainEqual, ms, label, sceneGroupId, groupedScenes, scenesForRun, observations, conditionDescription, latestSuccessfulScenes, nonCommunicationRuns, inlineReportObservation} from '../lib/cycle-data.ts';
+import {sceneSchema, catalogSchema, toolchainEqual, ms, label, sceneGroupId, groupedScenes, scenesForRun, observations, conditionDescription, latestSuccessfulScenes, nonCommunicationRuns, inlineReportObservation, detailReportPath, showInlineReport} from '../lib/cycle-data.ts';
 const fixture=JSON.parse(readFileSync(new URL('../../tests/fixtures/measurement-summary.json',import.meta.url)));
 
 test('upstream-produced summary crosses the public frontend contract',()=>{
@@ -134,4 +134,12 @@ test('inline model report follows selected history and rank without hiding failu
   assert.equal(inlineReportObservation(items,'a',2),undefined);
   assert.equal(inlineReportObservation(items,'missing',0),undefined);
   assert.deepEqual(items,snapshot);
+});
+
+
+test('full report appears only in detail and uses non-communication derived HTML',()=>{
+  assert.equal(showInlineReport('trend'),false);
+  assert.equal(showInlineReport('compare'),false);
+  assert.equal(showInlineReport('detail'),true);
+  assert.equal(detailReportPath('runs/aaaaaaaaaaaaaaaa/short/rank1.html'),'runs/aaaaaaaaaaaaaaaa/short/rank1-compute.html');
 });
